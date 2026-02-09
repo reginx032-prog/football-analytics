@@ -1,0 +1,9 @@
+# Konfiguracja i sekrety
+main.py
+config.py
+__pycache__/
+*.env
+
+# Baza danych i logi
+*.log
+*.sqlite
