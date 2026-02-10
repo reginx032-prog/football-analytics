@@ -45,14 +45,17 @@ def calculate_fair_odds(odds_dict):
 
 
 def fetch_upcoming_fixtures_with_odds(league_id, league_name):
-    """Skanuje najbliższe 15 dni w poszukiwaniu kursów i wylicza Fair Odds."""
+    """Skanuje 15 dni, wylicza Fair Odds i bierze tylko pierwszy nadchodzący mecz każdej drużyny."""
     print(f"📡 Rozpoczynam 15-dniowy skan dla: {league_name}...")
 
     now = datetime.now(timezone.utc)
     all_odds_for_league = {}
 
-    # 1. PĘTLA PO 15 DNIACH
-    for i in range(10):
+    # Zbiór do śledzenia drużyn, które już mają zaplanowany mecz w tym skanie (unikamy duplikowania drużyn)
+    teams_already_scheduled = set()
+
+    # 1. PĘTLA PO 15 DNIACH (Zbieranie wszystkich dostępnych kursów)
+    for i in range(15):
         target_date = (now + timedelta(days=i)).strftime('%Y-%m-%d')
         url_odds = f"{BASE_URL}/odds"
         params_odds = {
@@ -70,11 +73,9 @@ def fetch_upcoming_fixtures_with_odds(league_id, league_name):
                 bookmakers = o_item.get('bookmakers', [])
                 if not bookmakers: continue
 
-                # Priorytet dla Bet365 (8), inaczej pierwszy dostępny
                 selected_bm = next((b for b in bookmakers if b['id'] == 8), bookmakers[0])
                 bets = selected_bm.get('bets', [])
 
-                # Pobieranie surowych wartości
                 m_1x2 = next((b for b in bets if b['id'] == 1), None)
                 v_1x2 = {v['value']: v['odd'] for v in m_1x2['values']} if m_1x2 else {}
 
@@ -95,51 +96,60 @@ def fetch_upcoming_fixtures_with_odds(league_id, league_name):
                         'odd_btts_no': float(v_btts.get('No', 0))
                     }
 
-                    # Usunięcie marży
                     fair_odds = calculate_fair_odds(raw_odds)
                     fair_odds['source_bm'] = selected_bm['name']
-
                     all_odds_for_league[f_id] = fair_odds
 
         except Exception as e:
             print(f"   ⚠️ Błąd skanowania daty {target_date}: {e}")
 
-        time.sleep(0.2)  # Respektowanie limitów
+        time.sleep(0.2)
 
     if not all_odds_for_league:
-        print(f"   ℹ️ Brak kursów w API dla {league_name} na najbliższe 15 dni.")
         return None
 
-    # 2. Pobieramy TERMINARZ (szczegóły meczów)
+    # 2. Pobieramy TERMINARZ
     url_fix = f"{BASE_URL}/fixtures"
     params_fix = {'league': league_id, 'season': SEASON}
     res_fix = requests.get(url_fix, headers=HEADERS, params=params_fix).json()
-    fix_details = {item['fixture']['id']: item for item in res_fix.get('response', [])}
 
-    # 3. ŁĄCZENIE I FINALNE FILTROWANIE
+    # Sortujemy terminarz chronologicznie, żeby filtr unikalności złapał NAJBLIŻSZY mecz
+    fix_response = sorted(res_fix.get('response', []), key=lambda x: x['fixture']['date'])
+
+    # 3. ŁĄCZENIE Z FILTREM UNIKALNOŚCI DRUŻYN
     final_list = []
-    for f_id, o_data in all_odds_for_league.items():
-        if f_id in fix_details:
-            f_data = fix_details[f_id]
-            match_date = pd.to_datetime(f_data['fixture']['date'])
+    for f_data in fix_response:
+        f_id = f_data['fixture']['id']
 
-            if match_date > now:
-                t = f_data['teams']
-                final_list.append({
-                    'fixture_id': f_id,
-                    'date': f_data['fixture']['date'],
-                    'home_id': t['home']['id'],
-                    'home_name': t['home']['name'],
-                    'away_id': t['away']['id'],
-                    'away_name': t['away']['name'],
-                    'league_id': league_id,
-                    'league_name': league_name,
-                    **o_data
-                })
+        if f_id in all_odds_for_league:
+            h_id = f_data['teams']['home']['id']
+            a_id = f_data['teams']['away']['id']
+
+            # Jeśli żadna z drużyn nie ma jeszcze przypisanego meczu w tej tabeli
+            if h_id not in teams_already_scheduled and a_id not in teams_already_scheduled:
+                match_date = pd.to_datetime(f_data['fixture']['date'])
+
+                if match_date > now:
+                    # Blokujemy te drużyny dla kolejnych meczów w pętli
+                    teams_already_scheduled.add(h_id)
+                    teams_already_scheduled.add(a_id)
+
+                    t = f_data['teams']
+                    final_list.append({
+                        'fixture_id': f_id,
+                        'date': f_data['fixture']['date'],
+                        'home_id': h_id,
+                        'home_name': t['home']['name'],
+                        'away_id': a_id,
+                        'away_name': t['away']['name'],
+                        'league_id': league_id,
+                        'league_name': league_name,
+                        **all_odds_for_league[f_id]
+                    })
 
     if final_list:
         df = pd.DataFrame(final_list)
-        print(f"   ✅ Sukces: Sparowano {len(df)} meczów z Fair Odds dla {league_name}.")
+        print(f"   ✅ Sukces: Sparowano {len(df)} unikalnych meczów z Fair Odds.")
         return df
     return None
 
@@ -154,16 +164,17 @@ def run_odds_collection():
         if df is not None and not df.empty:
             all_upcoming_df = pd.concat([all_upcoming_df, df], ignore_index=True)
 
-        time.sleep(1)  # Przerwa między ligami
+        time.sleep(1)
 
     if not all_upcoming_df.empty:
         all_upcoming_df['date'] = pd.to_datetime(all_upcoming_df['date'])
 
-        print("\n💾 Aktualizacja tabeli 'upcoming_odds' w bazie...")
+        # Zapis do bazy (Replace zapewnia czystą tabelę przy każdym skanie)
         all_upcoming_df.to_sql('upcoming_odds', engine, if_exists='replace', index=False)
 
         duration = round(time.time() - start_time, 2)
-        print(f"✨ Gotowe! Tabela zaktualizowana ({len(all_upcoming_df)} meczów) w {duration}s.")
+        print(f"\n✨ Gotowe! Tabela 'upcoming_odds' zaktualizowana w {duration}s.")
+        print(f"📊 Łącznie unikalnych meczów: {len(all_upcoming_df)}")
     else:
         print("📭 Nie znaleziono żadnych przyszłych meczów z kursami.")
 
