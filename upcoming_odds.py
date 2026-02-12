@@ -1,18 +1,15 @@
 import requests
 import pandas as pd
-from sqlalchemy import create_engine
 import time
 from datetime import datetime, timezone, timedelta
 import logging
 
 # --- KONFIGURACJA ---
 try:
-    from main import API_KEY, BASE_URL, DB_URL, HEADERS, TOP_20_LEAGUES, SEASON, logger
+    from main import API_KEY, BASE_URL, HEADERS, TOP_20_LEAGUES, SEASON, logger, engine
 except ImportError:
     print("❌ Błąd konfiguracji w main.py - upewnij się, że plik istnieje.")
     exit()
-
-engine = create_engine(DB_URL)
 
 # Stałe konfiguracyjne
 SCAN_DAYS = 15  # Liczba dni do skanowania w przód

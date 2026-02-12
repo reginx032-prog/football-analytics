@@ -1,18 +1,15 @@
 import requests
 import pandas as pd
-from sqlalchemy import create_engine
 import time
 import numpy as np
 import logging
 
 # --- IMPORTUJEMY STAŁE ---
 try:
-    from main import API_KEY, BASE_URL, DB_URL, HEADERS, TOP_20_LEAGUES, SEASON, logger
+    from main import API_KEY, BASE_URL, HEADERS, TOP_20_LEAGUES, SEASON, logger, engine
 except ImportError:
     print("❌ Błąd: Nie znaleziono pliku main.py lub brak w nim potrzebnych stałych.")
     exit()
-
-engine = create_engine(DB_URL)
 
 # Stałe konfiguracyjne
 MATCHES_PER_ROUND = 2  # Liczba meczów na drużynę w rundzie
