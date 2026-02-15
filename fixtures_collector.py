@@ -196,7 +196,8 @@ def calculate_and_save_l5_stats(df_fixtures):
             'med_xg_for': round(np.median(xgf), 2),
             'med_xg_against': round(np.median(xga), 2),
             'total_points_l5': points,
-            'luck_factor': round(np.mean(scored) - np.mean(xgf), 2)
+            'luck_factor': round(np.mean(scored) - np.mean(xgf), 2),
+            'defense_luck_factor': round(np.mean(conceded) - np.mean(xga), 2)
         })
 
     l5_df = pd.DataFrame(l5_results)
@@ -206,6 +207,52 @@ def calculate_and_save_l5_stats(df_fixtures):
     except Exception as e:
         logger.error(f"Błąd podczas zapisu team_stats_last_5: {e}", exc_info=True)
 
+
+def calculate_league_stats():
+    """
+    Pobiera dane z tabeli 'fixtures', oblicza średnie ligowe (xG i gole)
+    i zapisuje je do nowej tabeli 'league_stats'.
+    """
+    logger.info("Obliczanie średnich statystyk dla każdej ligi...")
+
+    try:
+        # 1. Pobieramy dane z bazy do DataFrame
+        df_league = pd.read_sql('fixtures', engine)
+
+        if df_league.empty:
+            logger.warning("Tabela 'fixtures' jest pusta. Brak danych do obliczeń.")
+            return
+
+        # 2. Grupowanie po league_id i league_name
+        # Obliczamy średnie dla goli i xG (zarówno home jak i away)
+        league_stats = df_league.groupby(['league_id', 'league_name']).agg({
+            'goals_home': 'mean',
+            'goals_away': 'mean',
+            'xg_home': 'mean',
+            'xg_away': 'mean'
+        }).reset_index()
+
+        # 3. Zmiana nazw kolumn na czytelne (np. avg_league_xg_home)
+        league_stats.columns = [
+            'league_id',
+            'league_name',
+            'l_avg_scored_home',
+            'l_avg_scored_away',
+            'l_avg_xg_home',
+            'l_avg_xg_away'
+        ]
+
+        # Zaokrąglamy wyniki
+        league_stats = league_stats.round(3)
+
+        # 4. Zapisujemy do bazy danych
+        league_stats.to_sql('league_stats', engine, if_exists='replace', index=False)
+        logger.info(f"Zaktualizowano tabelę 'league_stats' dla {len(league_stats)} lig.")
+
+        return league_stats
+
+    except Exception as e:
+        logger.error(f"Błąd podczas obliczania statystyk ligowych: {e}", exc_info=True)
 
 def run_collection():
     start_time = time.time()
@@ -230,7 +277,7 @@ def run_collection():
         except Exception as e:
             logger.error(f"Błąd podczas zapisu fixtures: {e}", exc_info=True)
             return
-
+        calculate_league_stats()
         # Generowanie i zapisywanie tabeli Last 5
         calculate_and_save_l5_stats(all_fixtures_df)
 
@@ -238,6 +285,7 @@ def run_collection():
         logger.info(f"Gotowe! Całość zajęła {duration}s.")
     else:
         logger.warning("Nie pobrano żadnych meczów.")
+
 
 
 if __name__ == "__main__":
