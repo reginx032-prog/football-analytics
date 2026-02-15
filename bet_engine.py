@@ -1,4 +1,6 @@
 import pandas as pd
+import numpy as np
+from scipy.stats import poisson
 import logging
 
 # --- IMPORTUJEMY STAŁE ---
@@ -8,58 +10,84 @@ except ImportError:
     print("❌ Błąd: Nie znaleziono pliku main.py lub brak w nim potrzebnych stałych.")
     exit()
 
+def attack_power(stats_df,league_stats_df,upcoming_df):
+    stats_df['raw_attack'] = (
+            stats_df['avg_xg_for'] * 0.55 +
+            stats_df['avg_goals_scored'] * 0.25 +
+            stats_df['med_goals_scored'] * 0.20
+    ).round(3)
 
+    # 2. Merge dla GOSPODARZA
+    df = upcoming_df.merge(
+        stats_df[['team_id', 'raw_attack']],
+        left_on='home_id',
+        right_on='team_id',
+        how='left'
+    )
+    # Zmieniamy nazwę, żeby wiedzieć, że to atak GOSPODARZA
+    df = df.rename(columns={'raw_attack': 'home_attack_power'}).drop(columns=['team_id'])
+
+    # 3. Merge dla GOŚCIA (z tej samej tabeli stats_df!)
+    df = df.merge(
+        stats_df[['team_id', 'raw_attack']],
+        left_on='away_id',
+        right_on='team_id',
+        how='left'
+    )
+    # Zmieniamy nazwę, żeby wiedzieć, że to atak GOŚCIA
+    df = df.rename(columns={'raw_attack': 'away_attack_power'}).drop(columns=['team_id'])
+    league_stats_df['avg_perf_away'] = (league_stats_df['l_avg_scored_away'] + league_stats_df['l_avg_xg_away']) / 2
+    league_stats_df['avg_perf_home'] = (league_stats_df['l_avg_scored_home'] + league_stats_df['l_avg_xg_home']) / 2
+    league_stats_df['avg_perf_home']=league_stats_df['avg_perf_home'].round(2)
+    df = df.merge(
+        league_stats_df[['league_id', 'avg_perf_away', 'avg_perf_home']],
+        on='league_id',
+        how='left'
+    )
+    df['away_attack_power']=df['away_attack_power']/df['avg_perf_away']
+    df['home_attack_power'] = df['home_attack_power'] / df['avg_perf_home']
+    df['away_attack_power']= df['away_attack_power'].round(2)
+    df['home_attack_power'] = df['home_attack_power'].round(3)
+    df.to_csv('stats_output.csv', index=False, sep=';', encoding='utf-8')
+    return df
 def load_data():
     """
-    Ładuje dane z bazy danych PostgreSQL do DataFrame'ów.
-
-    Returns:
-        tuple: (team_stats_last_5_df, teams_df)
+    Ładuje 4 tabele z PostgreSQL:
+    - team_stats_last_5: statystyki drużyn (L5)
+    - teams: mapowanie team_id → league_id
+    - league_stats: średnie ligowe (home/away, goals/xG)
+    - upcoming_odds: nadchodzące mecze z kursami bukmachera
     """
     logger.info("Ładowanie danych z bazy danych...")
 
     try:
-        # Wczytanie tabeli team_stats_last_5
-        team_stats_last_5_df = pd.read_sql_table('team_stats_last_5', engine)
-        logger.info(f"Załadowano {len(team_stats_last_5_df)} rekordów z tabeli 'team_stats_last_5'")
+        team_stats_df = pd.read_sql_table('team_stats_last_5', engine)
+        logger.info(f"  team_stats_last_5: {len(team_stats_df)} drużyn")
 
-        # Wczytanie tabeli teams
         teams_df = pd.read_sql_table('teams', engine)
-        logger.info(f"Załadowano {len(teams_df)} rekordów z tabeli 'teams'")
+        logger.info(f"  teams:             {len(teams_df)} drużyn")
 
-        return team_stats_last_5_df, teams_df
+        league_stats_df = pd.read_sql_table('league_stats', engine)
+        logger.info(f"  league_stats:      {len(league_stats_df)} lig")
+
+        upcoming_df = pd.read_sql_table('upcoming_odds', engine)
+        logger.info(f"  upcoming_odds:     {len(upcoming_df)} meczów")
+
+        return team_stats_df, teams_df, league_stats_df, upcoming_df
 
     except Exception as e:
         logger.error(f"Błąd podczas ładowania danych z bazy: {e}", exc_info=True)
-        return None, None
+        return None, None, None, None
 
 
 def main():
     """Główna funkcja programu."""
-    # Ładowanie danych
-    team_stats_last_5_df, teams_df = load_data()
-
-    if team_stats_last_5_df is None or teams_df is None:
+    # Krok 1: Ładowanie danych
+    stats_df, teams_df, league_stats_df, upcoming_df = load_data()
+    main_df = attack_power(stats_df,league_stats_df,upcoming_df)
+    if any(x is None for x in [stats_df, teams_df, league_stats_df, upcoming_df]):
         logger.error("Nie udało się załadować danych. Kończę program.")
         return
-
-    # Wyświetlenie podstawowych informacji o DataFrame'ach
-    logger.info("\n" + "="*50)
-    logger.info("TEAM STATS LAST 5 - Informacje:")
-    logger.info(f"Kształt: {team_stats_last_5_df.shape}")
-    logger.info(f"Kolumny: {list(team_stats_last_5_df.columns)}")
-    logger.info("\nPierwsze 3 rekordy:")
-    logger.info(f"\n{team_stats_last_5_df.head(3)}")
-
-    logger.info("\n" + "="*50)
-    logger.info("TEAMS - Informacje:")
-    logger.info(f"Kształt: {teams_df.shape}")
-    logger.info(f"Kolumny: {list(teams_df.columns)}")
-    logger.info("\nPierwsze 3 rekordy:")
-    logger.info(f"\n{teams_df.head(3)}")
-
-    logger.info("\n" + "="*50)
-    logger.info("Dane załadowane pomyślnie!")
 
 
 if __name__ == "__main__":
