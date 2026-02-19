@@ -39,17 +39,59 @@ def attack_power(stats_df,league_stats_df,upcoming_df):
     league_stats_df['avg_perf_away'] = (league_stats_df['l_avg_scored_away'] + league_stats_df['l_avg_xg_away']) / 2
     league_stats_df['avg_perf_home'] = (league_stats_df['l_avg_scored_home'] + league_stats_df['l_avg_xg_home']) / 2
     league_stats_df['avg_perf_home']=league_stats_df['avg_perf_home'].round(2)
+    league_stats_df['avg_perf_away'] = league_stats_df['avg_perf_away'].round(2)
     df = df.merge(
         league_stats_df[['league_id', 'avg_perf_away', 'avg_perf_home']],
         on='league_id',
         how='left'
     )
+
     df['away_attack_power']=df['away_attack_power']/df['avg_perf_away']
     df['home_attack_power'] = df['home_attack_power'] / df['avg_perf_home']
     df['away_attack_power']= df['away_attack_power'].round(2)
-    df['home_attack_power'] = df['home_attack_power'].round(3)
-    df.to_csv('stats_output.csv', index=False, sep=';', encoding='utf-8')
+    df['home_attack_power'] = df['home_attack_power'].round(2)
+
     return df
+
+
+def deffence_power(df_input, stats_df, league_stats_df, upcoming_df):
+    # 1. Obliczamy surową obronę (blend)
+    stats_df['raw_deffence'] = (
+            stats_df['avg_xg_against'] * 0.55 +
+            stats_df['avg_goals_conceded'] * 0.25 +
+            stats_df['med_goals_conceded'] * 0.20
+    ).round(3)
+
+    # 2. Merge dla GOSPODARZA
+    df = df_input.merge(
+        stats_df[['team_id', 'raw_deffence']],
+        left_on='home_id',
+        right_on='team_id',
+        how='left'
+    )
+    df = df.rename(columns={'raw_deffence': 'home_deffence_power'}).drop(columns=['team_id'])
+
+    # 3. Merge dla GOŚCIA
+    df = df.merge(
+        stats_df[['team_id', 'raw_deffence']],
+        left_on='away_id',
+        right_on='team_id',
+        how='left'
+    )
+    df = df.rename(columns={'raw_deffence': 'away_deffence_power'}).drop(columns=['team_id'])
+
+    # 4. Normalizacja zgodna z wytycznymi:
+    # Obrona gospodarza / Średnia goli gości (avg_perf_away)
+    df['home_deffence_power'] = (df['home_deffence_power'] / df['avg_perf_away']).round(3)
+
+    # Obrona gościa / Średnia goli gospodarzy (avg_perf_home)
+    df['away_deffence_power'] = (df['away_deffence_power'] / df['avg_perf_home']).round(3)
+
+    # Zapis do CSV
+    df.to_csv('stats_output.csv', index=False, sep=';', encoding='utf-8')
+
+    return df
+
 def load_data():
     """
     Ładuje 4 tabele z PostgreSQL:
@@ -85,6 +127,7 @@ def main():
     # Krok 1: Ładowanie danych
     stats_df, teams_df, league_stats_df, upcoming_df = load_data()
     main_df = attack_power(stats_df,league_stats_df,upcoming_df)
+    main_df = deffence_power(main_df,stats_df,league_stats_df,upcoming_df)
     if any(x is None for x in [stats_df, teams_df, league_stats_df, upcoming_df]):
         logger.error("Nie udało się załadować danych. Kończę program.")
         return
