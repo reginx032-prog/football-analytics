@@ -119,9 +119,20 @@ def merge_corrections(df_input, stats_df):
     }).drop(columns=['team_id'])
     # Zapis do CSV
     return df
+
+
 def lambda_count(main_df):
-    main_df['lambda_home']= (main_df['home_attack_power']*main_df['away_deffence_power']).round(3)
-    main_df['lambda_away']=(main_df['away_attack_power']*main_df['home_deffence_power']).round(3)
+    # Obliczamy lambdę jako: (Siła Ataku * Siła Obrony przeciwnika) * Średnia goli w lidze
+    main_df['lambda_home'] = (
+            main_df['home_attack_power'] * main_df['away_deffence_power'] * main_df['avg_perf_home']
+    # <--- To jest kluczowe!
+    ).round(3)
+
+    main_df['lambda_away'] = (
+            main_df['away_attack_power'] * main_df['home_deffence_power'] * main_df['avg_perf_away']
+    # <--- I tutaj to samo
+    ).round(3)
+
     return main_df
 def lambda_corrections(main_df):
     main_df['correct_lambda_home'] = (main_df['lambda_home'] + (main_df['away_def_luck'] * 0.10))
@@ -393,7 +404,7 @@ def main():
     output_df.to_csv('output.csv', index=False, sep=';', encoding='utf-8')
     logger.info(f"Zapisano skrót do output.csv ({len(output_df)} meczów)")
 
-    vb_df = find_value_bets(output_df, min_edge=1)
+    vb_df = find_value_bets(output_df, min_edge=0.70)
     if not vb_df.empty:
         vb_df.to_csv('value_bets.csv', index=False, sep=';', encoding='utf-8')
         logger.info(f"Zapisano value_bets.csv ({len(vb_df)} zakładów)")
