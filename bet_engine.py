@@ -409,5 +409,8 @@ def main():
         vb_df.to_csv('value_bets.csv', index=False, sep=';', encoding='utf-8')
         logger.info(f"Zapisano value_bets.csv ({len(vb_df)} zakładów)")
 
+        vb_df.to_sql('value_bets', engine, if_exists='replace', index=False)
+        logger.info(f"Zapisano tabelę value_bets w bazie danych ({len(vb_df)} zakładów)")
+
 if __name__ == "__main__":
     main()
