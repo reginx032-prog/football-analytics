@@ -34,4 +34,5 @@ public class UpcomingOdds {
     private Double oddBttsYes;
     private Double oddBttsNo;
     private String sourceBm;
+    private String isFinished;
 }

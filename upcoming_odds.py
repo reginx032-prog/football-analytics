@@ -190,6 +190,7 @@ def fetch_upcoming_fixtures_with_odds(league_id, league_name):
                         'league_id': league_id,
                         'league_name': league_name,
                         **all_odds_for_league[f_id]
+
                     })
 
     if final_list:
@@ -215,6 +216,9 @@ def run_odds_collection():
 
     if not all_upcoming_df.empty:
         all_upcoming_df['date'] = pd.to_datetime(all_upcoming_df['date'])
+
+        # Domyślna kolumna statusu meczu
+        all_upcoming_df['is_finished'] = 'no'
 
         # Zapis do bazy (Replace zapewnia czystą tabelę przy każdym skanie)
         try:

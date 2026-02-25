@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { fetchTeamStats } from '../api/api.js'
+import { fetchStandings } from '../api/api.js'
 
 export default function LeagueTables() {
   const [grouped, setGrouped]   = useState({})
@@ -9,7 +9,7 @@ export default function LeagueTables() {
   const [error, setError]       = useState(null)
 
   useEffect(() => {
-    fetchTeamStats()
+    fetchStandings()
       .then(res => {
         const groups = {}
         res.data.forEach(team => {
