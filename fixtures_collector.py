@@ -21,7 +21,7 @@ def fetch_xg(fixture_id):
     """Pobiera statystyki Expected Goals (xG) zgodnie z formatem 'expected_goals'."""
     url = f"{BASE_URL}/fixtures/statistics"
     params = {'fixture': fixture_id}
-    xg_stats = {"home": 0.0, "away": 0.0}
+    xg_stats = {"home": None, "away": None}
     try:
         response = requests.get(url, headers=HEADERS, params=params, timeout=10)
         response.raise_for_status()
@@ -91,13 +91,18 @@ def fetch_fixtures(league_id, league_name):
             ga = goals.get('away')
 
             # Walidacja danych
-            if not all([f_id, h_id, a_id, gh is not None, ga is not None]):
+            if any(v is None for v in [f_id, h_id, a_id, gh, ga]):
                 logger.warning(f"Niepełne dane dla meczu {f_id}, pomijam")
                 continue
 
             logger.info(f"   Pobieranie xG dla ID {f_id}: {teams['home']['name']} vs {teams['away']['name']}")
             match_xg = fetch_xg(f_id)
             time.sleep(0.05)  # Rate limiting
+
+            # Walidacja xG
+            if any(v is None for v in [match_xg['home'], match_xg['away']]):
+                logger.warning(f"Brak danych xG dla meczu {f_id}, pomijam")
+                continue
 
             winner_id = h_id if gh > ga else (a_id if ga > gh else 0)
 
@@ -166,6 +171,11 @@ def calculate_and_save_l5_stats(df_fixtures):
             xf = m['xg_home'] if is_home else m['xg_away']
             xa = m['xg_away'] if is_home else m['xg_home']
 
+            # Walidacja - pomijamy mecz jeśli brakuje którejkolwiek wartości
+            if any(v is None for v in [s, c, xf, xa]):
+                logger.warning(f"Brak danych dla meczu {m['fixture_id']} (drużyna {t_id}), pomijam w L5")
+                continue
+
             scored.append(s)
             conceded.append(c)
             xgf.append(xf)
@@ -201,11 +211,73 @@ def calculate_and_save_l5_stats(df_fixtures):
         })
 
     l5_df = pd.DataFrame(l5_results)
+    logger.info(f"Obliczono statystyki L5 dla {len(l5_df)} drużyn")
+    return l5_df
+
+
+def fetch_standings(league_id, league_name):
+    """
+    Pobiera tabelę ligową z API-Football dla danej ligi i sezonu.
+    Zwraca DataFrame z kolumnami: team_id, league_id, league_name,
+    league_rank, league_points, league_played, league_won, league_drawn,
+    league_lost, league_gf, league_ga, league_gd
+    """
+    url = f"{BASE_URL}/standings"
+    params = {'league': league_id, 'season': SEASON}
     try:
-        l5_df.to_sql('team_stats_last_5', engine, if_exists='replace', index=False)
-        logger.info(f"Zaktualizowano tabelę 'team_stats_last_5' ({len(l5_df)} drużyn)")
+        response = requests.get(url, headers=HEADERS, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+
+        league_response = data.get('response', [])
+        if not league_response:
+            logger.warning(f"Brak danych standings dla {league_name}")
+            return None
+
+        standings_raw = league_response[0].get('league', {}).get('standings', [])
+        if not standings_raw:
+            logger.warning(f"Pusta tablica standings dla {league_name}")
+            return None
+
+        group = standings_raw[0]
+        rows = []
+        for entry in group:
+            team_id = entry.get('team', {}).get('id')
+            if team_id is None:
+                continue
+            all_stats = entry.get('all', {})
+            goals = all_stats.get('goals', {})
+            rows.append({
+                'team_id':        team_id,
+                'league_id':      league_id,
+                'league_name':    league_name,
+                'league_rank':    entry.get('rank'),
+                'league_points':  entry.get('points'),
+                'league_played':  all_stats.get('played'),
+                'league_won':     all_stats.get('win'),
+                'league_drawn':   all_stats.get('draw'),
+                'league_lost':    all_stats.get('lose'),
+                'league_gf':      goals.get('for'),
+                'league_ga':      goals.get('against'),
+                'league_gd':      entry.get('goalsDiff'),
+            })
+
+        if not rows:
+            logger.warning(f"Brak wierszy standings dla {league_name}")
+            return None
+
+        logger.info(f"Pobrano standings dla {league_name}: {len(rows)} drużyn")
+        return pd.DataFrame(rows)
+
+    except requests.exceptions.Timeout:
+        logger.error(f"Timeout przy pobieraniu standings dla {league_name}")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Błąd HTTP przy standings dla {league_name}: {e}")
+        return None
     except Exception as e:
-        logger.error(f"Błąd podczas zapisu team_stats_last_5: {e}", exc_info=True)
+        logger.error(f"Nieoczekiwany błąd standings dla {league_name}: {e}", exc_info=True)
+        return None
 
 
 def calculate_league_stats():
@@ -278,8 +350,46 @@ def run_collection():
             logger.error(f"Błąd podczas zapisu fixtures: {e}", exc_info=True)
             return
         calculate_league_stats()
-        # Generowanie i zapisywanie tabeli Last 5
-        calculate_and_save_l5_stats(all_fixtures_df)
+
+        # Krok 1: oblicz L5 (bez zapisu)
+        l5_df = calculate_and_save_l5_stats(all_fixtures_df)
+        if l5_df is None or l5_df.empty:
+            logger.warning("Brak danych L5, pomijam standings.")
+            return
+
+        # Krok 2: pobierz standings dla wszystkich lig
+        all_standings_df = pd.DataFrame()
+        for l_id, l_name in TOP_20_LEAGUES.items():
+            s_df = fetch_standings(l_id, l_name)
+            if s_df is not None and not s_df.empty:
+                all_standings_df = pd.concat([all_standings_df, s_df], ignore_index=True)
+            time.sleep(1.2)
+
+        # Krok 3: merge standings do l5_df
+        standings_cols = [
+            'team_id', 'league_id', 'league_name',
+            'league_rank', 'league_points', 'league_played',
+            'league_won', 'league_drawn', 'league_lost',
+            'league_gf', 'league_ga', 'league_gd'
+        ]
+        if not all_standings_df.empty:
+            l5_df = l5_df.merge(
+                all_standings_df[standings_cols],
+                on='team_id',
+                how='left'
+            )
+            logger.info("Połączono standings z L5 stats.")
+        else:
+            logger.warning("Brak standings — kolumny ligowe będą NULL.")
+            for col in standings_cols[1:]:
+                l5_df[col] = None
+
+        # Krok 4: jeden zapis do bazy
+        try:
+            l5_df.to_sql('team_stats_last_5', engine, if_exists='replace', index=False)
+            logger.info(f"Zapisano team_stats_last_5 ({len(l5_df)} drużyn) ze standings.")
+        except Exception as e:
+            logger.error(f"Błąd zapisu team_stats_last_5: {e}", exc_info=True)
 
         duration = round(time.time() - start_time, 2)
         logger.info(f"Gotowe! Całość zajęła {duration}s.")

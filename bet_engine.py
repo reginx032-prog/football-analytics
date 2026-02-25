@@ -12,8 +12,8 @@ except ImportError:
 
 def attack_power(stats_df,league_stats_df,upcoming_df):
     stats_df['raw_attack'] = (
-            stats_df['avg_xg_for'] * 0.55 +
-            stats_df['avg_goals_scored'] * 0.25 +
+            stats_df['avg_xg_for'] * 0.40 +
+            stats_df['avg_goals_scored'] * 0.40 +
             stats_df['med_goals_scored'] * 0.20
     ).round(3)
 
@@ -38,18 +38,20 @@ def attack_power(stats_df,league_stats_df,upcoming_df):
     df = df.rename(columns={'raw_attack': 'away_attack_power'}).drop(columns=['team_id'])
     league_stats_df['avg_perf_away'] = (league_stats_df['l_avg_scored_away'] + league_stats_df['l_avg_xg_away']) / 2
     league_stats_df['avg_perf_home'] = (league_stats_df['l_avg_scored_home'] + league_stats_df['l_avg_xg_home']) / 2
-    league_stats_df['avg_perf_home']=league_stats_df['avg_perf_home'].round(2)
+    league_stats_df['avg_perf_home'] = league_stats_df['avg_perf_home'].round(2)
     league_stats_df['avg_perf_away'] = league_stats_df['avg_perf_away'].round(2)
+    # Wspólna średnia ligowa — eliminuje bias home/away przy normalizacji sił
+    league_stats_df['avg_total'] = ((league_stats_df['avg_perf_home'] + league_stats_df['avg_perf_away']) / 2).round(2)
     df = df.merge(
-        league_stats_df[['league_id', 'avg_perf_away', 'avg_perf_home']],
+        league_stats_df[['league_id', 'avg_perf_away', 'avg_perf_home', 'avg_total']],
         on='league_id',
         how='left'
     )
 
-    df['away_attack_power']=df['away_attack_power']/df['avg_perf_away']
-    df['home_attack_power'] = df['home_attack_power'] / df['avg_perf_home']
-    df['away_attack_power']= df['away_attack_power'].round(2)
-    df['home_attack_power'] = df['home_attack_power'].round(2)
+    # Obie siły ataku normalizowane przez tę samą średnią — home advantage
+    # wynika naturalnie z lambda_count (skalowanie przez avg_perf_home / avg_perf_away)
+    df['home_attack_power'] = (df['home_attack_power'] / df['avg_total']).round(2)
+    df['away_attack_power'] = (df['away_attack_power'] / df['avg_total']).round(2)
 
     return df
 
@@ -57,8 +59,8 @@ def attack_power(stats_df,league_stats_df,upcoming_df):
 def deffence_power(df_input, stats_df, league_stats_df, upcoming_df):
     # 1. Obliczamy surową obronę (blend)
     stats_df['raw_deffence'] = (
-            stats_df['avg_xg_against'] * 0.55 +
-            stats_df['avg_goals_conceded'] * 0.25 +
+            stats_df['avg_xg_against'] * 0.40 +
+            stats_df['avg_goals_conceded'] * 0.40 +
             stats_df['med_goals_conceded'] * 0.20
     ).round(3)
 
@@ -80,12 +82,10 @@ def deffence_power(df_input, stats_df, league_stats_df, upcoming_df):
     )
     df = df.rename(columns={'raw_deffence': 'away_deffence_power'}).drop(columns=['team_id'])
 
-    # 4. Normalizacja zgodna z wytycznymi:
-    # Obrona gospodarza / Średnia goli gości (avg_perf_away)
-    df['home_deffence_power'] = (df['home_deffence_power'] / df['avg_perf_away']).round(3)
-
-    # Obrona gościa / Średnia goli gospodarzy (avg_perf_home)
-    df['away_deffence_power'] = (df['away_deffence_power'] / df['avg_perf_home']).round(3)
+    # 4. Normalizacja — obie siły obrony przez tę samą wspólną średnią ligową
+    # (spójne z normalizacją ataku — eliminuje bias kierunkowy)
+    df['home_deffence_power'] = (df['home_deffence_power'] / df['avg_total']).round(3)
+    df['away_deffence_power'] = (df['away_deffence_power'] / df['avg_total']).round(3)
 
 
     return df

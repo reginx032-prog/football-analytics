@@ -38,7 +38,20 @@
       "Bash(tasklist /FI \"PID eq 36748\")",
       "Bash(cmd.exe /c \"tasklist /FI \"\"PID eq 36748\"\"\")",
       "Bash(cmd.exe /c \"tasklist\")",
-      "Bash(cmd.exe /c \"tasklist /NH /FO CSV\")"
+      "Bash(cmd.exe /c \"tasklist /NH /FO CSV\")",
+      "Bash(py:*)",
+      "Bash(./mvnw compile:*)",
+      "Bash(java -version:*)",
+      "Bash(where:*)",
+      "Bash(cat:*)",
+      "Bash(\"/c/Program Files/JetBrains/PyCharm 2025.3/jbr/bin/java.exe\":*)",
+      "Bash(export JAVA_HOME=\"/c/Program Files/JetBrains/PyCharm 2025.3/jbr\")",
+      "Bash(export PATH=\"$JAVA_HOME/bin:$PATH\")",
+      "Bash(python3:*)",
+      "Bash(\"/c/Users/PC/AppData/Local/Programs/Python/Python39/python.exe\" -c \":*)",
+      "Bash(\"/c/Users/PC/AppData/Local/Programs/Python/Python39/python.exe\":*)",
+      "Bash(find:*)",
+      "Bash(npm create:*)"
     ]
   }
 }

@@ -22,4 +22,17 @@ public class TeamStatsL5 {
     private Integer totalPointsL5;
     private Double luckFactor;
     private Double defenseLuckFactor;
+
+    // --- Standings (tabela ligowa) ---
+    private Long leagueId;
+    private String leagueName;
+    private Integer leagueRank;
+    private Integer leaguePoints;
+    private Integer leaguePlayed;
+    private Integer leagueWon;
+    private Integer leagueDrawn;
+    private Integer leagueLost;
+    private Integer leagueGf;
+    private Integer leagueGa;
+    private Integer leagueGd;
 }
