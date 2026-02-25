@@ -20,9 +20,10 @@ function edgeIcon(edge) {
 }
 
 export default function ValueBets() {
-  const [bets, setBets]       = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState(null)
+  const [bets, setBets]         = useState([])
+  const [loading, setLoading]   = useState(true)
+  const [error, setError]       = useState(null)
+  const [expanded, setExpanded] = useState(new Set())
 
   useEffect(() => {
     fetchValueBets()
@@ -33,6 +34,14 @@ export default function ValueBets() {
       .catch(err => setError(err.message))
       .finally(() => setLoading(false))
   }, [])
+
+  function toggleRow(key) {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
 
   if (loading) return <div className="status-box"><span className="spinner" />Ładowanie value betów...</div>
   if (error)   return <div className="status-box error">⚠ Błąd: {error}</div>
@@ -55,26 +64,50 @@ export default function ValueBets() {
               <th>Fair</th>
               <th>Bukmacher</th>
               <th>Edge</th>
-              <th>Wskazówki</th>
+              <th style={{width: '32px'}}></th>
             </tr>
           </thead>
           <tbody>
-            {bets.map(b => (
-              <tr key={`${b.fixtureId}-${b.market}`} className={edgeClass(b.edge)}>
-                <td className="date-cell">{fmtDate(b.date)}</td>
-                <td className="league-cell">{b.leagueName}</td>
-                <td className="team-name">{b.homeName} <span style={{color:'var(--muted)'}}>vs</span> {b.awayName}</td>
-                <td><span className="market-pill">{b.market}</span></td>
-                <td className="odd fair-odd">{b.fairOdd != null ? Number(b.fairOdd).toFixed(3) : '-'}</td>
-                <td className="odd bookie-odd">{b.bookieOdd != null ? Number(b.bookieOdd).toFixed(3) : '-'}</td>
-                <td>
-                  <span className="edge-badge">
-                    {edgeIcon(b.edge)} {b.edge != null ? `+${(b.edge * 100).toFixed(0)}%` : '-'}
-                  </span>
-                </td>
-                <td className="hints">{b.hints || ''}</td>
-              </tr>
-            ))}
+            {bets.map(b => {
+              const key = `${b.fixtureId}-${b.market}`
+              const isOpen = expanded.has(key)
+              return (
+                <>
+                  <tr
+                    key={key}
+                    className={`${edgeClass(b.edge)} data-row ${isOpen ? 'row-open' : ''}`}
+                    onClick={() => toggleRow(key)}
+                  >
+                    <td className="date-cell">{fmtDate(b.date)}</td>
+                    <td className="league-cell">{b.leagueName}</td>
+                    <td className="team-name">
+                      {b.homeName} <span className="vs-sep">vs</span> {b.awayName}
+                    </td>
+                    <td><span className="market-pill">{b.market}</span></td>
+                    <td className="odd fair-odd">{b.fairOdd != null ? Number(b.fairOdd).toFixed(3) : '-'}</td>
+                    <td className="odd bookie-odd">{b.bookieOdd != null ? Number(b.bookieOdd).toFixed(3) : '-'}</td>
+                    <td>
+                      <span className="edge-badge">
+                        {edgeIcon(b.edge)} {b.edge != null ? `+${(b.edge * 100).toFixed(0)}%` : '-'}
+                      </span>
+                    </td>
+                    <td className="expand-cell">
+                      <span className={`expand-icon ${isOpen ? 'expand-icon--open' : ''}`}>›</span>
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <tr key={`${key}-hints`} className="hints-row">
+                      <td colSpan={8}>
+                        <div className="hints-panel">
+                          <span className="hints-label">Wskazówki modelu</span>
+                          <p className="hints-text">{b.hints || 'Brak wskazówek dla tego zakładu.'}</p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              )
+            })}
           </tbody>
         </table>
       </div>

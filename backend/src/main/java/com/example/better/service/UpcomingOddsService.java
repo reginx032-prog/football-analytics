@@ -15,7 +15,7 @@ public class UpcomingOddsService {
     private final UpcomingOddsRepository upcomingOddsRepository;
 
     public List<UpcomingOddsDto> getAll() {
-        return upcomingOddsRepository.findAll().stream()
+        return upcomingOddsRepository.findByIsFinished("no").stream()
                 .map(this::toDto)
                 .toList();
     }

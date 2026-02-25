@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { fetchUpcomingOdds } from '../api/api.js'
 
 const fmt     = v => v != null ? Number(v).toFixed(2) : '-'
@@ -6,10 +6,34 @@ const fmtDate = d => d
   ? new Date(d).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
   : '-'
 
+const COLS = [
+  { key: 'date',       label: 'Data',      sortable: true  },
+  { key: 'leagueName', label: 'Liga',      sortable: true  },
+  { key: 'homeName',   label: 'Gospodarz', sortable: false },
+  { key: 'awayName',   label: 'Gość',      sortable: false },
+  { key: 'oddHome',    label: '1',         sortable: true  },
+  { key: 'oddDraw',    label: 'X',         sortable: true  },
+  { key: 'oddAway',    label: '2',         sortable: true  },
+  { key: 'oddOver25',  label: 'O 2.5',     sortable: true  },
+  { key: 'oddUnder25', label: 'U 2.5',     sortable: true  },
+  { key: 'oddBttsYes', label: 'BTTS T',    sortable: true, mobile: true },
+  { key: 'oddBttsNo',  label: 'BTTS N',    sortable: true, mobile: true },
+]
+
+function SortIcon({ dir }) {
+  return (
+    <span className="sort-icon">
+      {dir === 'asc' ? '↑' : dir === 'desc' ? '↓' : '↕'}
+    </span>
+  )
+}
+
 export default function UpcomingOdds() {
   const [matches, setMatches] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
+  const [sortKey, setSortKey] = useState('date')
+  const [sortDir, setSortDir] = useState('asc')
 
   useEffect(() => {
     fetchUpcomingOdds()
@@ -17,6 +41,29 @@ export default function UpcomingOdds() {
       .catch(err => setError(err.message))
       .finally(() => setLoading(false))
   }, [])
+
+  function handleSort(key) {
+    if (sortKey === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortKey(key)
+      setSortDir('asc')
+    }
+  }
+
+  const sorted = useMemo(() => {
+    return [...matches].sort((a, b) => {
+      const va = a[sortKey]
+      const vb = b[sortKey]
+      if (va == null && vb == null) return 0
+      if (va == null) return 1
+      if (vb == null) return -1
+      const cmp = typeof va === 'string'
+        ? va.localeCompare(vb, 'pl')
+        : Number(va) - Number(vb)
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }, [matches, sortKey, sortDir])
 
   if (loading) return <div className="status-box"><span className="spinner" />Ładowanie...</div>
   if (error)   return <div className="status-box error">⚠ {error}</div>
@@ -32,21 +79,24 @@ export default function UpcomingOdds() {
         <table className="data-table">
           <thead>
             <tr>
-              <th>Data</th>
-              <th>Liga</th>
-              <th>Gospodarz</th>
-              <th>Gość</th>
-              <th>1</th>
-              <th>X</th>
-              <th>2</th>
-              <th>O 2.5</th>
-              <th>U 2.5</th>
-              <th className="hide-mobile">BTTS T</th>
-              <th className="hide-mobile">BTTS N</th>
+              {COLS.map(col => (
+                <th
+                  key={col.key}
+                  className={[
+                    col.mobile   ? 'hide-mobile' : '',
+                    col.sortable ? 'th-sortable'  : '',
+                    sortKey === col.key ? 'th-active' : '',
+                  ].join(' ').trim()}
+                  onClick={col.sortable ? () => handleSort(col.key) : undefined}
+                >
+                  {col.label}
+                  {col.sortable && <SortIcon dir={sortKey === col.key ? sortDir : null} />}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {matches.map(m => (
+            {sorted.map(m => (
               <tr key={m.fixtureId}>
                 <td className="date-cell">{fmtDate(m.date)}</td>
                 <td className="league-cell">{m.leagueName}</td>

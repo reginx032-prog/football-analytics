@@ -51,7 +51,12 @@
       "Bash(\"/c/Users/PC/AppData/Local/Programs/Python/Python39/python.exe\" -c \":*)",
       "Bash(\"/c/Users/PC/AppData/Local/Programs/Python/Python39/python.exe\":*)",
       "Bash(find:*)",
-      "Bash(npm create:*)"
+      "Bash(npm create:*)",
+      "Bash(powershell -Command \"Get-Command npm | Select-Object -ExpandProperty Source\")",
+      "Bash(powershell -Command \"Get-Command npm -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source\")",
+      "Bash(cmd /c \"where npm\")",
+      "Bash(cmd /c \"where node\")",
+      "Bash(cmd /c \"where npm & where node & echo done\")"
     ]
   }
 }

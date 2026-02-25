@@ -35,18 +35,6 @@ public class TeamStatsL5Service {
         dto.setTotalPointsL5(entity.getTotalPointsL5());
         dto.setLuckFactor(entity.getLuckFactor());
         dto.setDefenseLuckFactor(entity.getDefenseLuckFactor());
-        // --- Standings ---
-        dto.setLeagueId(entity.getLeagueId());
-        dto.setLeagueName(entity.getLeagueName());
-        dto.setLeagueRank(entity.getLeagueRank());
-        dto.setLeaguePoints(entity.getLeaguePoints());
-        dto.setLeaguePlayed(entity.getLeaguePlayed());
-        dto.setLeagueWon(entity.getLeagueWon());
-        dto.setLeagueDrawn(entity.getLeagueDrawn());
-        dto.setLeagueLost(entity.getLeagueLost());
-        dto.setLeagueGf(entity.getLeagueGf());
-        dto.setLeagueGa(entity.getLeagueGa());
-        dto.setLeagueGd(entity.getLeagueGd());
         return dto;
     }
 }
