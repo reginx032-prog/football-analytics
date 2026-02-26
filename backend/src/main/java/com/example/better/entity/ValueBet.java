@@ -21,4 +21,5 @@ public class ValueBet {
     private Double bookieOdd;
     private Double edge;
     private String hints;
+    private String betResult;
 }

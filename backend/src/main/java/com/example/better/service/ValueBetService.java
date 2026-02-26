@@ -32,6 +32,7 @@ public class ValueBetService {
         dto.setBookieOdd(entity.getBookieOdd());
         dto.setEdge(entity.getEdge());
         dto.setHints(entity.getHints());
+        dto.setBetResult(entity.getBetResult());
         return dto;
     }
 }
