@@ -71,11 +71,12 @@ export default function ValueBets() {
             {bets.map(b => {
               const key = `${b.fixtureId}-${b.market}`
               const isOpen = expanded.has(key)
+              const resultClass = b.betResult === 'won' ? 'row-won' : b.betResult === 'lost' ? 'row-lost' : ''
               return (
                 <>
                   <tr
                     key={key}
-                    className={`${edgeClass(b.edge)} data-row ${isOpen ? 'row-open' : ''}`}
+                    className={`${edgeClass(b.edge)} data-row ${isOpen ? 'row-open' : ''} ${resultClass}`}
                     onClick={() => toggleRow(key)}
                   >
                     <td className="date-cell">{fmtDate(b.date)}</td>

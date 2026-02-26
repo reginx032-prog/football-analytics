@@ -557,6 +557,62 @@ td.bookie-odd:hover {
   color: var(--accent);
 }
 
+/* ── Historical stats grid ── */
+.hist-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.hist-stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: var(--shadow-sm);
+}
+.hist-stat-label {
+  font-size: 0.75rem;
+  color: var(--text3);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.hist-stat-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.hist-stat-value.won  { color: #16a34a; }
+.hist-stat-value.lost { color: #dc2626; }
+
+.result-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.result-won  { background: #dcfce7; color: #15803d; }
+.result-lost { background: #fee2e2; color: #b91c1c; }
+
+.pnl-cell { font-weight: 600; font-size: 0.85rem; }
+.pnl-pos  { color: #16a34a; }
+.pnl-neg  { color: #dc2626; }
+
+/* ── Wynik zakładu ── */
+.row-won td { background: #f0fdf4 !important; }
+.row-won:hover td { background: #dcfce7 !important; }
+.row-won td:first-child { border-left: 3px solid #16a34a; }
+
+.row-lost td { background: #fff5f5 !important; }
+.row-lost:hover td { background: #fee2e2 !important; }
+.row-lost td:first-child { border-left: 3px solid #dc2626; }
+
 .hints-row td {
   padding: 0 !important;
   background: var(--surface3);
