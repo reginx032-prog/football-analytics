@@ -342,6 +342,7 @@ def find_value_bets(output_df, min_edge=0.05):
                     'bookie_odd':  bookie_odd,
                     'edge':        edge,
                     'hints':       row.get('hints', ''),
+                    'bet_result':  'pending',
                 })
 
     if not value_rows:
@@ -404,7 +405,7 @@ def main():
     output_df.to_csv('output.csv', index=False, sep=';', encoding='utf-8')
     logger.info(f"Zapisano skrót do output.csv ({len(output_df)} meczów)")
 
-    vb_df = find_value_bets(output_df, min_edge=0.70)
+    vb_df = find_value_bets(output_df, min_edge=0.20)
     if not vb_df.empty:
         vb_df.to_csv('value_bets.csv', index=False, sep=';', encoding='utf-8')
         logger.info(f"Zapisano value_bets.csv ({len(vb_df)} zakładów)")

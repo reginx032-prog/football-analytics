@@ -56,7 +56,13 @@
       "Bash(powershell -Command \"Get-Command npm -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source\")",
       "Bash(cmd /c \"where npm\")",
       "Bash(cmd /c \"where node\")",
-      "Bash(cmd /c \"where npm & where node & echo done\")"
+      "Bash(cmd /c \"where npm & where node & echo done\")",
+      "Bash(dir:*)",
+      "Bash(cmd /c \"for /f \"\"tokens=5\"\" %a in \\(''netstat -aon ^| findstr :5173''\\) do taskkill /F /PID %a\")",
+      "Bash(powershell -Command:*)",
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(\"/c/Users/PC/AppData/Local/Programs/Python/Python39/python.exe\" -c:*)",
+      "Bash(./mvnw.cmd package:*)"
     ]
   }
 }
