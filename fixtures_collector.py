@@ -4,12 +4,7 @@ import time
 import numpy as np
 import logging
 
-# --- IMPORTUJEMY STAŁE ---
-try:
-    from main import API_KEY, BASE_URL, HEADERS, TOP_20_LEAGUES, SEASON, logger, engine
-except ImportError:
-    print("❌ Błąd: Nie znaleziono pliku main.py lub brak w nim potrzebnych stałych.")
-    exit()
+from config import API_KEY, BASE_URL, HEADERS, TOP_20_LEAGUES, SEASON, logger, engine
 
 # Stałe konfiguracyjne
 MATCHES_PER_ROUND = 2  # Liczba meczów na drużynę w rundzie
@@ -17,8 +12,12 @@ ROUNDS_TO_FETCH = 5  # Liczba rund do pobrania dla statystyk Last 5
 BUFFER_MATCHES = 2  # Dodatkowy bufor meczów
 
 
+# =============================================================================
+# EXTRACT
+# =============================================================================
+
 def fetch_xg(fixture_id):
-    """Pobiera statystyki Expected Goals (xG) zgodnie z formatem 'expected_goals'."""
+    """EXTRACT: Pobiera statystyki Expected Goals (xG) z API."""
     url = f"{BASE_URL}/fixtures/statistics"
     params = {'fixture': fixture_id}
     xg_stats = {"home": None, "away": None}
@@ -53,7 +52,7 @@ def fetch_xg(fixture_id):
 
 
 def fetch_fixtures(league_id, league_name):
-    """Pobiera dynamicznie wyliczoną liczbę meczów dla danej ligi z danymi xG."""
+    """EXTRACT: Pobiera dynamicznie wyliczoną liczbę meczów dla danej ligi z danymi xG."""
     logger.info(f"Przetwarzanie ligi: {league_name}...")
     url = f"{BASE_URL}/fixtures"
     params = {'league': league_id, 'season': SEASON, 'status': 'FT'}
@@ -74,7 +73,6 @@ def fetch_fixtures(league_id, league_name):
             unique_teams.add(item['teams']['away']['id'])
 
         n_teams = len(unique_teams)
-        # Wzór: (liczba_drużyn / 2) * liczba_rund + bufor
         required_matches = int((n_teams / MATCHES_PER_ROUND) * ROUNDS_TO_FETCH) + BUFFER_MATCHES
         recent_matches = all_matches[:required_matches]
 
@@ -90,7 +88,6 @@ def fetch_fixtures(league_id, league_name):
             gh = goals.get('home')
             ga = goals.get('away')
 
-            # Walidacja danych
             if any(v is None for v in [f_id, h_id, a_id, gh, ga]):
                 logger.warning(f"Niepełne dane dla meczu {f_id}, pomijam")
                 continue
@@ -99,7 +96,6 @@ def fetch_fixtures(league_id, league_name):
             match_xg = fetch_xg(f_id)
             time.sleep(0.05)  # Rate limiting
 
-            # Walidacja xG
             if any(v is None for v in [match_xg['home'], match_xg['away']]):
                 logger.warning(f"Brak danych xG dla meczu {f_id}, pomijam")
                 continue
@@ -139,11 +135,17 @@ def fetch_fixtures(league_id, league_name):
         return None
 
 
-def calculate_and_save_l5_stats(df_fixtures):
-    """Oblicza średnie i mediany statystyk L5. Remis w winner_id to 0."""
+# =============================================================================
+# TRANSFORM
+# =============================================================================
+
+def transform_l5_stats(df_fixtures):
+    """
+    TRANSFORM: Oblicza statystyki Last 5 dla każdej drużyny.
+    Zwraca DataFrame bez żadnego zapisu do bazy.
+    """
     logger.info("Generowanie tabeli statystyk Last 5 (L5) - Średnie + Mediany...")
 
-    # Pobieramy unikalne drużyny
     home_teams = df_fixtures[['home_id', 'home_name']].rename(columns={'home_id': 'id', 'home_name': 'name'})
     away_teams = df_fixtures[['away_id', 'away_name']].rename(columns={'away_id': 'id', 'away_name': 'name'})
     teams = pd.concat([home_teams, away_teams]).drop_duplicates()
@@ -152,7 +154,6 @@ def calculate_and_save_l5_stats(df_fixtures):
 
     for _, team in teams.iterrows():
         t_id = team['id']
-        # POPRAWKA: Sortujemy po dacie (najnowsze najpierw) i dopiero potem bierzemy 5 pierwszych
         t_history = df_fixtures[
             (df_fixtures['home_id'] == t_id) | (df_fixtures['away_id'] == t_id)
         ].sort_values('date', ascending=False).head(5)
@@ -165,13 +166,11 @@ def calculate_and_save_l5_stats(df_fixtures):
         for _, m in t_history.iterrows():
             is_home = int(m['home_id']) == int(t_id)
 
-            # Gole i xG
             s = m['goals_home'] if is_home else m['goals_away']
             c = m['goals_away'] if is_home else m['goals_home']
             xf = m['xg_home'] if is_home else m['xg_away']
             xa = m['xg_away'] if is_home else m['xg_home']
 
-            # Walidacja - pomijamy mecz jeśli brakuje którejkolwiek wartości
             if any(v is None for v in [s, c, xf, xa]):
                 logger.warning(f"Brak danych dla meczu {m['fixture_id']} (drużyna {t_id}), pomijam w L5")
                 continue
@@ -181,18 +180,12 @@ def calculate_and_save_l5_stats(df_fixtures):
             xgf.append(xf)
             xga.append(xa)
 
-            # --- POPRAWIONA LOGIKA PUNKTACJI ---
             w_id = m['winner_id']
-
-            # Sprawdzamy czy winner_id to 0 (Twoje oznaczenie remisu)
             if w_id == 0:
                 points += 1
-            # Sprawdzamy czy to ID naszej drużyny (wygrana)
             elif int(w_id) == int(t_id):
                 points += 3
-            # W przeciwnym razie porażka (0 pkt)
 
-        # Dodajemy do wyników średnie i mediany
         l5_results.append({
             'team_id': t_id,
             'team_name': team['name'],
@@ -200,7 +193,6 @@ def calculate_and_save_l5_stats(df_fixtures):
             'avg_goals_conceded': round(np.mean(conceded), 2),
             'avg_xg_for': round(np.mean(xgf), 2),
             'avg_xg_against': round(np.mean(xga), 2),
-            # DODANE MEDIANY
             'med_goals_scored': round(np.median(scored), 2),
             'med_goals_conceded': round(np.median(conceded), 2),
             'med_xg_for': round(np.median(xgf), 2),
@@ -212,90 +204,97 @@ def calculate_and_save_l5_stats(df_fixtures):
 
     l5_df = pd.DataFrame(l5_results)
     logger.info(f"Obliczono statystyki L5 dla {len(l5_df)} drużyn")
-    try:
-        l5_df.to_sql('team_stats_last_5', engine, if_exists='replace', index=False)
-        logger.info(f"Zapisano team_stats_last_5 ({len(l5_df)} drużyn).")
-    except Exception as e:
-        logger.error(f"Błąd zapisu team_stats_last_5: {e}", exc_info=True)
+    return l5_df
 
 
-def calculate_league_stats():
+def transform_league_stats(df_fixtures):
     """
-    Pobiera dane z tabeli 'fixtures', oblicza średnie ligowe (xG i gole)
-    i zapisuje je do nowej tabeli 'league_stats'.
+    TRANSFORM: Oblicza średnie statystyki ligowe z przekazanego DataFrame.
+    Nie czyta z bazy danych. Zwraca DataFrame bez zapisu.
     """
     logger.info("Obliczanie średnich statystyk dla każdej ligi...")
 
+    if df_fixtures.empty:
+        logger.warning("Brak danych do obliczeń statystyk ligowych.")
+        return pd.DataFrame()
+
+    league_stats = df_fixtures.groupby(['league_id', 'league_name']).agg({
+        'goals_home': 'mean',
+        'goals_away': 'mean',
+        'xg_home': 'mean',
+        'xg_away': 'mean'
+    }).reset_index()
+
+    league_stats.columns = [
+        'league_id',
+        'league_name',
+        'l_avg_scored_home',
+        'l_avg_scored_away',
+        'l_avg_xg_home',
+        'l_avg_xg_away'
+    ]
+
+    return league_stats.round(3)
+
+
+# =============================================================================
+# LOAD
+# =============================================================================
+
+def load_all(fixtures_df, l5_df, league_df):
+    """
+    LOAD: Zapisuje wszystkie tabele w jednym bloku try/catch.
+    Jeśli którykolwiek zapis się nie powiedzie, żadna tabela nie zostaje
+    zaktualizowana częściowo – błąd jest logowany i propagowany dalej.
+    """
     try:
-        # 1. Pobieramy dane z bazy do DataFrame
-        df_league = pd.read_sql('fixtures', engine)
+        fixtures_df.to_sql('fixtures', engine, if_exists='replace', index=False)
+        logger.info(f"Zapisano {len(fixtures_df)} meczów do tabeli 'fixtures'")
 
-        if df_league.empty:
-            logger.warning("Tabela 'fixtures' jest pusta. Brak danych do obliczeń.")
-            return
+        l5_df.to_sql('team_stats_last_5', engine, if_exists='replace', index=False)
+        logger.info(f"Zapisano team_stats_last_5 ({len(l5_df)} drużyn).")
 
-        # 2. Grupowanie po league_id i league_name
-        # Obliczamy średnie dla goli i xG (zarówno home jak i away)
-        league_stats = df_league.groupby(['league_id', 'league_name']).agg({
-            'goals_home': 'mean',
-            'goals_away': 'mean',
-            'xg_home': 'mean',
-            'xg_away': 'mean'
-        }).reset_index()
-
-        # 3. Zmiana nazw kolumn na czytelne (np. avg_league_xg_home)
-        league_stats.columns = [
-            'league_id',
-            'league_name',
-            'l_avg_scored_home',
-            'l_avg_scored_away',
-            'l_avg_xg_home',
-            'l_avg_xg_away'
-        ]
-
-        # Zaokrąglamy wyniki
-        league_stats = league_stats.round(3)
-
-        # 4. Zapisujemy do bazy danych
-        league_stats.to_sql('league_stats', engine, if_exists='replace', index=False)
-        logger.info(f"Zaktualizowano tabelę 'league_stats' dla {len(league_stats)} lig.")
-
-        return league_stats
+        league_df.to_sql('league_stats', engine, if_exists='replace', index=False)
+        logger.info(f"Zaktualizowano tabelę 'league_stats' dla {len(league_df)} lig.")
 
     except Exception as e:
-        logger.error(f"Błąd podczas obliczania statystyk ligowych: {e}", exc_info=True)
+        logger.error(f"Błąd podczas ładowania danych – pipeline zatrzymany: {e}", exc_info=True)
+        raise
+
+
+# =============================================================================
+# ORCHESTRATOR
+# =============================================================================
 
 def run_collection():
     start_time = time.time()
-    all_fixtures_df = pd.DataFrame()
 
+    # --- EXTRACT ---
+    all_dfs = []
     for l_id, l_name in TOP_20_LEAGUES.items():
         df = fetch_fixtures(l_id, l_name)
         if df is not None and not df.empty:
-            all_fixtures_df = pd.concat([all_fixtures_df, df], ignore_index=True)
+            all_dfs.append(df)
             logger.info(f"Dodano {len(df)} rekordów.")
         time.sleep(1.2)  # Rate limiting
 
-    if not all_fixtures_df.empty:
-        all_fixtures_df['date'] = pd.to_datetime(all_fixtures_df['date'])
-        # Sortujemy przed zapisem, by najnowsze były na górze
-        all_fixtures_df = all_fixtures_df.sort_values(by='date', ascending=False)
-
-        logger.info("Wysyłanie surowych meczów do 'fixtures'...")
-        try:
-            all_fixtures_df.to_sql('fixtures', engine, if_exists='replace', index=False)
-            logger.info(f"Zapisano {len(all_fixtures_df)} meczów do tabeli 'fixtures'")
-        except Exception as e:
-            logger.error(f"Błąd podczas zapisu fixtures: {e}", exc_info=True)
-            return
-        calculate_league_stats()
-        calculate_and_save_l5_stats(all_fixtures_df)
-
-        duration = round(time.time() - start_time, 2)
-        logger.info(f"Gotowe! Całość zajęła {duration}s.")
-    else:
+    if not all_dfs:
         logger.warning("Nie pobrano żadnych meczów.")
+        return
 
+    all_fixtures_df = pd.concat(all_dfs, ignore_index=True)
+    all_fixtures_df['date'] = pd.to_datetime(all_fixtures_df['date'])
+    all_fixtures_df = all_fixtures_df.sort_values(by='date', ascending=False)
+
+    # --- TRANSFORM ---
+    l5_df = transform_l5_stats(all_fixtures_df)
+    league_df = transform_league_stats(all_fixtures_df)
+
+    # --- LOAD ---
+    load_all(all_fixtures_df, l5_df, league_df)
+
+    duration = round(time.time() - start_time, 2)
+    logger.info(f"Gotowe! Całość zajęła {duration}s.")
 
 
 if __name__ == "__main__":

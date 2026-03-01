@@ -62,7 +62,14 @@
       "Bash(powershell -Command:*)",
       "Bash(.venv/Scripts/python.exe:*)",
       "Bash(\"/c/Users/PC/AppData/Local/Programs/Python/Python39/python.exe\" -c:*)",
-      "Bash(./mvnw.cmd package:*)"
+      "Bash(./mvnw.cmd package:*)",
+      "Bash(PYTHON=/c/Users/szpad/AppData/Local/Programs/Python/Python312/python.exe)",
+      "Bash(\"$PYTHON\" -m pytest --version)",
+      "Bash(\"$PYTHON\" -m pip install pytest -q)",
+      "Bash(PYEXE=\"C:/Users/szpad/AppData/Local/Programs/Python/Python312/python.exe\")",
+      "Bash(\"$PYEXE\" -m pip install pytest -q)",
+      "Bash(\"/c/Users/szpad/AppData/Local/Programs/Python/Python312/python.exe\" -m pip install pytest -q)",
+      "Bash(\"/c/Users/szpad/AppData/Local/Programs/Python/Python312/python.exe\" -m pytest tests/test_etl.py -v)"
     ]
   }
 }

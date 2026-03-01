@@ -1,14 +1,8 @@
 import requests
 import pandas as pd
 import time
-import logging
 
-# --- IMPORTUJEMY STAŁE ---
-try:
-    from main import API_KEY, BASE_URL, HEADERS, TOP_20_LEAGUES, SEASON, logger, engine
-except ImportError:
-    print("❌ Błąd: Nie znaleziono pliku main.py lub brak w nim potrzebnych stałych.")
-    exit()
+from config import API_KEY, BASE_URL, HEADERS, TOP_20_LEAGUES, SEASON, logger, engine
 
 
 def fetch_standings(league_id, league_name):
