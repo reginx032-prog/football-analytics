@@ -69,7 +69,9 @@
       "Bash(PYEXE=\"C:/Users/szpad/AppData/Local/Programs/Python/Python312/python.exe\")",
       "Bash(\"$PYEXE\" -m pip install pytest -q)",
       "Bash(\"/c/Users/szpad/AppData/Local/Programs/Python/Python312/python.exe\" -m pip install pytest -q)",
-      "Bash(\"/c/Users/szpad/AppData/Local/Programs/Python/Python312/python.exe\" -m pytest tests/test_etl.py -v)"
+      "Bash(\"/c/Users/szpad/AppData/Local/Programs/Python/Python312/python.exe\" -m pytest tests/test_etl.py -v)",
+      "Bash(git push origin etl)",
+      "Bash(gh pr:*)"
     ]
   }
 }
