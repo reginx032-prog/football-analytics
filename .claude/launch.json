@@ -5,7 +5,7 @@
       "name": "Frontend",
       "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
       "runtimeArgs": ["node_modules/vite/bin/vite.js", "--port", "5173"],
-      "cwd": "C:\\Users\\PC\\Desktop\\Nowy folder (4)\\football-analytics\\frontend",
+      "cwd": "C:\\Users\\PC\\Desktop\\betterv3\\football-analytics\\frontend",
       "port": 5173
     }
   ]

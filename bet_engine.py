@@ -12,8 +12,8 @@ from config import logger, engine
 
 def attack_power(stats_df, league_stats_df, upcoming_df):
     stats_df['raw_attack'] = (
-            stats_df['avg_xg_for'] * 0.40 +
-            stats_df['avg_goals_scored'] * 0.40 +
+            stats_df['avg_xg_for'] * 0.55 +
+            stats_df['avg_goals_scored'] * 0.25 +
             stats_df['med_goals_scored'] * 0.20
     ).round(3)
 
@@ -54,8 +54,8 @@ def attack_power(stats_df, league_stats_df, upcoming_df):
 def deffence_power(df_input, stats_df):
     """TRANSFORM: Oblicza i normalizuje siły obrony obu drużyn."""
     stats_df['raw_deffence'] = (
-            stats_df['avg_xg_against'] * 0.40 +
-            stats_df['avg_goals_conceded'] * 0.40 +
+            stats_df['avg_xg_against'] * 0.55 +
+            stats_df['avg_goals_conceded'] * 0.25 +
             stats_df['med_goals_conceded'] * 0.20
     ).round(3)
 

@@ -1,5 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { fetchValueBets } from '../api/api.js'
+
+function SortIcon({ dir }) {
+  return <span className="sort-icon">{dir === 'asc' ? '↑' : dir === 'desc' ? '↓' : '↕'}</span>
+}
 
 const fmtDate = d => d
   ? new Date(d).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
@@ -23,17 +27,52 @@ export default function ValueBets() {
   const [bets, setBets]         = useState([])
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(null)
-  const [expanded, setExpanded] = useState(new Set())
+  const [expanded, setExpanded]           = useState(new Set())
+  const [sortKey, setSortKey]             = useState('edge')
+  const [sortDir, setSortDir]             = useState('desc')
+  const [selectedMarkets, setSelectedMarkets] = useState(new Set())
 
   useEffect(() => {
     fetchValueBets()
-      .then(res => {
-        const sorted = res.data.slice().sort((a, b) => b.edge - a.edge)
-        setBets(sorted)
-      })
+      .then(res => setBets(res.data))
       .catch(err => setError(err.message))
       .finally(() => setLoading(false))
   }, [])
+
+  function handleSort(key) {
+    if (sortKey === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortKey(key)
+      setSortDir(key === 'date' ? 'asc' : 'desc')
+    }
+  }
+
+  const allMarkets = useMemo(() => [...new Set(bets.map(b => b.market))].sort(), [bets])
+
+  function toggleMarket(m) {
+    setSelectedMarkets(prev => {
+      const next = new Set(prev)
+      next.has(m) ? next.delete(m) : next.add(m)
+      return next
+    })
+  }
+
+  const filtered = useMemo(() =>
+    selectedMarkets.size === 0 ? bets : bets.filter(b => selectedMarkets.has(b.market))
+  , [bets, selectedMarkets])
+
+  const sorted = useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      const va = a[sortKey]
+      const vb = b[sortKey]
+      if (va == null && vb == null) return 0
+      if (va == null) return 1
+      if (vb == null) return -1
+      const cmp = typeof va === 'string' ? va.localeCompare(vb, 'pl') : Number(va) - Number(vb)
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }, [filtered, sortKey, sortDir])
 
   function toggleRow(key) {
     setExpanded(prev => {
@@ -51,24 +90,41 @@ export default function ValueBets() {
     <div>
       <div className="section-header">
         <span className="section-title">Value Bets</span>
-        <span className="badge">{bets.length} zakładów</span>
+        <span className="badge">{sorted.length} / {bets.length} zakładów</span>
+      </div>
+      <div className="selector-pills" style={{marginBottom: '12px'}}>
+        {allMarkets.map(m => (
+          <button
+            key={m}
+            className={`pill ${selectedMarkets.has(m) ? 'pill-active' : ''}`}
+            onClick={() => toggleMarket(m)}
+          >
+            {m}
+          </button>
+        ))}
       </div>
       <div className="data-table-wrap">
         <table className="data-table">
           <thead>
             <tr>
-              <th>Data</th>
+              <th className={`th-sortable ${sortKey === 'date' ? 'th-active' : ''}`} onClick={() => handleSort('date')}>
+                Data <SortIcon dir={sortKey === 'date' ? sortDir : null} />
+              </th>
               <th>Liga</th>
               <th>Mecz</th>
               <th>Rynek</th>
               <th>Fair</th>
-              <th>Bukmacher</th>
-              <th>Edge</th>
+              <th className={`th-sortable ${sortKey === 'bookieOdd' ? 'th-active' : ''}`} onClick={() => handleSort('bookieOdd')}>
+                Bukmacher <SortIcon dir={sortKey === 'bookieOdd' ? sortDir : null} />
+              </th>
+              <th className={`th-sortable ${sortKey === 'edge' ? 'th-active' : ''}`} onClick={() => handleSort('edge')}>
+                Edge <SortIcon dir={sortKey === 'edge' ? sortDir : null} />
+              </th>
               <th style={{width: '32px'}}></th>
             </tr>
           </thead>
           <tbody>
-            {bets.map(b => {
+            {sorted.map(b => {
               const key = `${b.fixtureId}-${b.market}`
               const isOpen = expanded.has(key)
               const resultClass = b.betResult === 'won' ? 'row-won' : b.betResult === 'lost' ? 'row-lost' : ''

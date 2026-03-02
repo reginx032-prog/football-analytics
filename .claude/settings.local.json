@@ -71,7 +71,10 @@
       "Bash(\"/c/Users/szpad/AppData/Local/Programs/Python/Python312/python.exe\" -m pip install pytest -q)",
       "Bash(\"/c/Users/szpad/AppData/Local/Programs/Python/Python312/python.exe\" -m pytest tests/test_etl.py -v)",
       "Bash(git push origin etl)",
-      "Bash(gh pr:*)"
+      "Bash(gh pr:*)",
+      "Bash(npm run dev)",
+      "Bash(xargs -r taskkill /F /PID)",
+      "Bash(python3.exe /tmp/analyze_bets.py)"
     ]
   }
 }
