@@ -212,7 +212,9 @@ def fetch_fixtures(league_id, league_name, season):
                 logger.warning(f"  Niepełne dane meczu {f_id}, pomijam")
                 continue
 
-            xg = fetch_xg(f_id)
+            xg   = fetch_xg(f_id)
+            time.sleep(REQUEST_DELAY)
+            odds = fetch_odds(f_id)
             time.sleep(REQUEST_DELAY)
 
             try:
@@ -221,21 +223,29 @@ def fetch_fixtures(league_id, league_name, season):
                 round_num = 0
 
             fixtures_list.append({
-                'fixture_id':   f_id,
-                'date':         f.get('date'),
-                'season':       season,
-                'league_id':    league_id,
-                'league_name':  league_name,
-                'round_number': round_num,
-                'home_id':      h_id,
-                'home_name':    teams['home']['name'],
-                'away_id':      a_id,
-                'away_name':    teams['away']['name'],
-                'goals_home':   gh,
-                'goals_away':   ga,
-                'xg_home':      xg['home'],   # może być None
-                'xg_away':      xg['away'],   # może być None
-                'winner_id':    h_id if gh > ga else (a_id if ga > gh else 0)
+                'fixture_id':    f_id,
+                'date':          f.get('date'),
+                'season':        season,
+                'league_id':     league_id,
+                'league_name':   league_name,
+                'round_number':  round_num,
+                'home_id':       h_id,
+                'home_name':     teams['home']['name'],
+                'away_id':       a_id,
+                'away_name':     teams['away']['name'],
+                'goals_home':    gh,
+                'goals_away':    ga,
+                'xg_home':       xg['home'],
+                'xg_away':       xg['away'],
+                'winner_id':     h_id if gh > ga else (a_id if ga > gh else 0),
+                'odd_home':      odds['odd_home'],
+                'odd_draw':      odds['odd_draw'],
+                'odd_away':      odds['odd_away'],
+                'odd_over_25':   odds['odd_over_25'],
+                'odd_under_25':  odds['odd_under_25'],
+                'odd_btts_yes':  odds['odd_btts_yes'],
+                'odd_btts_no':   odds['odd_btts_no'],
+                'source_bm':     odds['source_bm'],
             })
 
         logger.info(f"  [{season}] {league_name} — pobrano {len(fixtures_list)} meczów")
