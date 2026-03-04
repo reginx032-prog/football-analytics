@@ -21,6 +21,7 @@ export default function HistoricalBets() {
   const [sortKey, setSortKey]             = useState('date')
   const [sortDir, setSortDir]             = useState('desc')
   const [selectedMarkets, setSelectedMarkets] = useState(new Set())
+  const [selectedLeagues, setSelectedLeagues] = useState(new Set())
 
   useEffect(() => {
     fetchHistoricalBets()
@@ -42,6 +43,10 @@ export default function HistoricalBets() {
     data ? [...new Set(data.bets.map(b => b.market))].sort() : []
   , [data])
 
+  const allLeagues = useMemo(() =>
+    data ? [...new Set(data.bets.map(b => b.leagueName))].sort() : []
+  , [data])
+
   function toggleMarket(m) {
     setSelectedMarkets(prev => {
       const next = new Set(prev)
@@ -50,10 +55,21 @@ export default function HistoricalBets() {
     })
   }
 
+  function toggleLeague(l) {
+    setSelectedLeagues(prev => {
+      const next = new Set(prev)
+      next.has(l) ? next.delete(l) : next.add(l)
+      return next
+    })
+  }
+
   const filteredBets = useMemo(() => {
     if (!data) return []
-    return selectedMarkets.size === 0 ? data.bets : data.bets.filter(b => selectedMarkets.has(b.market))
-  }, [data, selectedMarkets])
+    return data.bets.filter(b =>
+      (selectedMarkets.size === 0 || selectedMarkets.has(b.market)) &&
+      (selectedLeagues.size === 0 || selectedLeagues.has(b.leagueName))
+    )
+  }, [data, selectedMarkets, selectedLeagues])
 
   const filteredStats = useMemo(() => {
     if (!filteredBets.length) return null
@@ -90,7 +106,7 @@ export default function HistoricalBets() {
         <span className="section-title">Historia zakładów</span>
         <span className="badge">{stats.totalBets} / {data.bets.length} zakładów</span>
       </div>
-      <div className="selector-pills" style={{marginBottom: '12px'}}>
+      <div className="selector-pills" style={{marginBottom: '6px'}}>
         {allMarkets.map(m => (
           <button
             key={m}
@@ -98,6 +114,17 @@ export default function HistoricalBets() {
             onClick={() => toggleMarket(m)}
           >
             {m}
+          </button>
+        ))}
+      </div>
+      <div className="selector-pills" style={{marginBottom: '12px'}}>
+        {allLeagues.map(l => (
+          <button
+            key={l}
+            className={`pill ${selectedLeagues.has(l) ? 'pill-active' : ''}`}
+            onClick={() => toggleLeague(l)}
+          >
+            {l}
           </button>
         ))}
       </div>

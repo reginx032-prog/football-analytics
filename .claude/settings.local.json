@@ -85,7 +85,8 @@
       "Bash(cmd.exe /c \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python39\\\\python.exe -W ignore -c \"\"import psycopg2; conn = psycopg2.connect\\(host=''localhost'', port=5433, dbname=''football_data'', user=''admin'', password=''secret_password''\\); cur = conn.cursor\\(\\); cur.execute\\(chr\\(83\\)+chr\\(69\\)+chr\\(76\\)+chr\\(69\\)+chr\\(67\\)+chr\\(84\\)+'' table_name FROM information_schema.tables WHERE table_schema=''+chr\\(39\\)+''public''+chr\\(39\\)\\); print\\([t[0] for t in cur.fetchall\\(\\)]\\); conn.close\\(\\)\"\"\")",
       "Bash(cmd.exe /c \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python39\\\\python.exe C:\\\\Users\\\\PC\\\\Desktop\\\\betterv3\\\\football-analytics\\\\yield_query.py\")",
       "Bash(cmd.exe /c \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python39\\\\python.exe C:\\\\Users\\\\PC\\\\Desktop\\\\betterv3\\\\football-analytics\\\\yield_query.py > C:\\\\Users\\\\PC\\\\Desktop\\\\betterv3\\\\football-analytics\\\\yield_output.txt 2>&1\")",
-      "Bash(cmd.exe /c \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python39\\\\python.exe --version\")"
+      "Bash(cmd.exe /c \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python39\\\\python.exe --version\")",
+      "Bash(source venv/Scripts/activate)"
     ]
   }
 }
