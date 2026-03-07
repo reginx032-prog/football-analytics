@@ -105,6 +105,13 @@ export default function HistoricalBets() {
       <div className="section-header">
         <span className="section-title">Historia zakładów</span>
         <span className="badge">{stats.totalBets} / {data.bets.length} zakładów</span>
+        <a
+          href="/api/historical-bets/export"
+          download="historical_bets.xlsx"
+          className="export-btn"
+        >
+          ⬇ Eksportuj do Excel
+        </a>
       </div>
       <div className="selector-pills" style={{marginBottom: '6px'}}>
         {allMarkets.map(m => (

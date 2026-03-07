@@ -8,9 +8,10 @@ from config import API_KEY, BASE_URL, HEADERS, TOP_20_LEAGUES, logger, engine
 # ---------------------------------------------------------------------------
 # Konfiguracja
 # ---------------------------------------------------------------------------
-HISTORICAL_SEASONS    = [2022, 2023, 2024, 2025]
+HISTORICAL_SEASONS    = [2023, 2024, 2025]
 REQUEST_DELAY         = 0.4   # ~2.5 req/sek, bezpiecznie poniżej limitu
 PREFERRED_BOOKMAKER_ID = 8    # Bwin (spójnie z upcoming_odds.py)
+DEBUG_LIMIT           = None   # None = pobierz wszystko, int = limit meczów per liga (debug)
 
 
 class RateLimitError(Exception):
@@ -93,88 +94,13 @@ def fetch_xg(fixture_id, retries=3, retry_delay=5):
     return xg
 
 
-# ---------------------------------------------------------------------------
-# EXTRACT — kursy bukmacherskie dla pojedynczego meczu
-# ---------------------------------------------------------------------------
-
-EMPTY_ODDS = {
-    'odd_home': None, 'odd_draw': None, 'odd_away': None,
-    'odd_over_25': None, 'odd_under_25': None,
-    'odd_btts_yes': None, 'odd_btts_no': None,
-    'source_bm': None
-}
-
-def fetch_odds(fixture_id, retries=3, retry_delay=5):
-    """Pobiera kursy z /odds dla danego fixture_id. Retry przy 503/timeout."""
-    url = f"{BASE_URL}/odds"
-    for attempt in range(1, retries + 1):
-        try:
-            res = requests.get(url, headers=HEADERS, params={'fixture': fixture_id}, timeout=10)
-            if res.status_code == 429:
-                remaining = res.headers.get('x-ratelimit-requests-remaining', '?')
-                raise RateLimitError(f"Dzienny limit API wyczerpany (odds fixture {fixture_id}), pozostało: {remaining}")
-            if res.status_code == 503:
-                logger.warning(f"503 odds fixture {fixture_id}, próba {attempt}/{retries}, czekam {retry_delay}s...")
-                time.sleep(retry_delay)
-                continue
-            res.raise_for_status()
-            body = res.json()
-            _check_rate_limit(body, f'odds fixture {fixture_id}')
-            response = body.get('response', [])
-            if not response:
-                return dict(EMPTY_ODDS)
-
-            bookmakers = response[0].get('bookmakers', [])
-            if not bookmakers:
-                return dict(EMPTY_ODDS)
-
-            bm = next((b for b in bookmakers if b.get('id') == PREFERRED_BOOKMAKER_ID), bookmakers[0])
-            bets = bm.get('bets', [])
-
-            m_1x2  = next((b for b in bets if b.get('id') == 1), None)
-            m_ou   = next((b for b in bets if b.get('id') == 5), None)
-            m_btts = next((b for b in bets if b.get('id') == 8), None)
-
-            v_1x2  = {v['value']: v['odd'] for v in m_1x2.get('values',  [])} if m_1x2  else {}
-            v_ou   = {v['value']: v['odd'] for v in m_ou.get('values',   [])} if m_ou   else {}
-            v_btts = {v['value']: v['odd'] for v in m_btts.get('values', [])} if m_btts else {}
-
-            def to_float(d, key):
-                try:
-                    return float(d.get(key, 0)) or None
-                except (ValueError, TypeError):
-                    return None
-
-            return {
-                'odd_home':      to_float(v_1x2,  'Home'),
-                'odd_draw':      to_float(v_1x2,  'Draw'),
-                'odd_away':      to_float(v_1x2,  'Away'),
-                'odd_over_25':   to_float(v_ou,   'Over 2.5'),
-                'odd_under_25':  to_float(v_ou,   'Under 2.5'),
-                'odd_btts_yes':  to_float(v_btts, 'Yes'),
-                'odd_btts_no':   to_float(v_btts, 'No'),
-                'source_bm':     bm.get('name'),
-            }
-
-        except RateLimitError:
-            raise
-        except requests.exceptions.Timeout:
-            logger.warning(f"Timeout odds fixture {fixture_id}, próba {attempt}/{retries}")
-            time.sleep(retry_delay)
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Błąd HTTP odds fixture {fixture_id}: {e}")
-            break
-        except Exception as e:
-            logger.error(f"Nieoczekiwany błąd odds fixture {fixture_id}: {e}", exc_info=True)
-            break
-    return dict(EMPTY_ODDS)
 
 
 # ---------------------------------------------------------------------------
 # EXTRACT — mecze dla ligi i sezonu
 # ---------------------------------------------------------------------------
 
-def fetch_fixtures(league_id, league_name, season):
+def fetch_fixtures(league_id, league_name, season, max_matches=None):
     """
     Pobiera wszystkie zakończone mecze (FT) dla danej ligi i sezonu.
     W odróżnieniu od fixtures_collector NIE pomija meczów bez xG —
@@ -198,6 +124,8 @@ def fetch_fixtures(league_id, league_name, season):
 
         fixtures_list = []
         for item in all_matches:
+            if max_matches is not None and len(fixtures_list) >= max_matches:
+                break
             f     = item.get('fixture', {})
             teams = item.get('teams', {})
             goals = item.get('goals', {})
@@ -213,8 +141,6 @@ def fetch_fixtures(league_id, league_name, season):
                 continue
 
             xg   = fetch_xg(f_id)
-            time.sleep(REQUEST_DELAY)
-            odds = fetch_odds(f_id)
             time.sleep(REQUEST_DELAY)
 
             try:
@@ -238,14 +164,6 @@ def fetch_fixtures(league_id, league_name, season):
                 'xg_home':       xg['home'],
                 'xg_away':       xg['away'],
                 'winner_id':     h_id if gh > ga else (a_id if ga > gh else 0),
-                'odd_home':      odds['odd_home'],
-                'odd_draw':      odds['odd_draw'],
-                'odd_away':      odds['odd_away'],
-                'odd_over_25':   odds['odd_over_25'],
-                'odd_under_25':  odds['odd_under_25'],
-                'odd_btts_yes':  odds['odd_btts_yes'],
-                'odd_btts_no':   odds['odd_btts_no'],
-                'source_bm':     odds['source_bm'],
             })
 
         logger.info(f"  [{season}] {league_name} — pobrano {len(fixtures_list)} meczów")
@@ -287,15 +205,23 @@ def run_collection():
     load_leagues_df()
     all_dfs = []
 
+    total_collected = 0
     try:
         for season in HISTORICAL_SEASONS:
             logger.info(f"=== Sezon {season} ===")
             for league_id, league_name in TOP_20_LEAGUES.items():
-                df = fetch_fixtures(league_id, league_name, season)
+                remaining = (DEBUG_LIMIT - total_collected) if DEBUG_LIMIT is not None else None
+                df = fetch_fixtures(league_id, league_name, season, max_matches=remaining)
                 if df is not None and not df.empty:
                     all_dfs.append(df)
-                    logger.info(f"  -> Dodano {len(df)} meczów.")
+                    total_collected += len(df)
+                    logger.info(f"  -> Dodano {len(df)} meczów. Łącznie: {total_collected}")
+                if DEBUG_LIMIT is not None and total_collected >= DEBUG_LIMIT:
+                    logger.info(f"  [DEBUG] Osiągnięto limit {DEBUG_LIMIT} meczów, kończę.")
+                    break
                 time.sleep(1.2)
+            if DEBUG_LIMIT is not None and total_collected >= DEBUG_LIMIT:
+                break
     except RateLimitError as e:
         logger.error(f"LIMIT API: {e}")
         logger.warning("Zapisuję zebrane dane i kończę.")

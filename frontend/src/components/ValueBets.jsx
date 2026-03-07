@@ -91,6 +91,13 @@ export default function ValueBets() {
       <div className="section-header">
         <span className="section-title">Value Bets</span>
         <span className="badge">{sorted.length} / {bets.length} zakładów</span>
+        <a
+          href="/api/value-bets/export"
+          download="value_bets.xlsx"
+          className="export-btn"
+        >
+          ⬇ Eksportuj do Excel
+        </a>
       </div>
       <div className="selector-pills" style={{marginBottom: '12px'}}>
         {allMarkets.map(m => (
