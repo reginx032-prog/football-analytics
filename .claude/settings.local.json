@@ -88,7 +88,15 @@
       "Bash(cmd.exe /c \"C:\\\\Users\\\\PC\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python39\\\\python.exe --version\")",
       "Bash(source venv/Scripts/activate)",
       "Bash(Get-Content \"C:\\\\Users\\\\PC\\\\Desktop\\\\betterv3\\\\football-analytics\\\\.env\")",
-      "Bash(docker exec football_db_container psql -U admin -d football_data -c \":*)"
+      "Bash(docker exec football_db_container psql -U admin -d football_data -c \":*)",
+      "Bash(cmd.exe /c \"where psql\")",
+      "Bash(cmd.exe /c \"dir /s /b \"\"C:\\\\Program Files\\\\PostgreSQL\\\\psql.exe\"\" 2>nul\")",
+      "Bash(cmd.exe /c \"dir /s /b \"\"C:\\\\Program Files\\\\PostgreSQL\"\" 2>nul | findstr psql.exe\")",
+      "Bash(docker exec:*)",
+      "Bash(__NEW_LINE_8b40676d2a90f0aa__ docker exec football_db_container psql -U admin -d football_data -c \":*)",
+      "Bash(docker ps:*)",
+      "WebFetch(domain:airflow.apache.org)",
+      "Bash(grep -E \"\\\\.\\(py|java\\)$\")"
     ]
   }
 }

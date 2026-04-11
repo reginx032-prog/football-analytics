@@ -81,7 +81,6 @@ def transform_bet_results(vb_df, finished_matches, existing_keys):
 
     hist_df = pd.DataFrame(rows)
 
-    # Deduplicacja względem przekazanego zbioru kluczy
     if existing_keys:
         hist_df = hist_df[~hist_df.apply(
             lambda r: (int(r['fixture_id']), r['market']) in existing_keys, axis=1
@@ -179,7 +178,7 @@ def extract_existing_historical_keys():
             return set(zip(existing['fixture_id'].astype(int), existing['market']))
         return set()
     except Exception:
-        return set()  # Tabela jeszcze nie istnieje – pierwsze uruchomienie
+        return set()
 
 
 # =============================================================================
@@ -188,27 +187,42 @@ def extract_existing_historical_keys():
 
 def load_results(finished_ids, hist_df):
     """
-    LOAD: Aktualizuje is_finished i zapisuje historical_bets w jednym try/catch.
-    Obie operacje traktowane jako całość – jeśli jedna padnie,
-    błąd jest logowany i propagowany bez częściowej aktualizacji.
+    LOAD: Aktualizuje is_finished i zapisuje historical_bets w jednej transakcji.
+    Używamy engine.begin(), aby zapewnić automatyczny COMMIT na końcu bloku
+    lub ROLLBACK w przypadku jakiegokolwiek błędu.
     """
     try:
-        with engine.connect() as conn:
+        # engine.begin() otwiera połączenie i transakcję jednocześnie
+        with engine.begin() as conn:
+            # 1. Aktualizacja statusu meczów
             conn.execute(
                 text("UPDATE upcoming_odds SET is_finished = 'yes' WHERE fixture_id IN :ids"),
                 {'ids': tuple(finished_ids)}
             )
-            conn.commit()
-        logger.info(f"Zaktualizowano {len(finished_ids)} meczów → is_finished='yes'.")
+            logger.info(f"Zaktualizowano {len(finished_ids)} meczów w upcoming_odds.")
 
-        if not hist_df.empty:
-            hist_df.to_sql('historical_bets', engine, if_exists='append', index=False)
-            won  = (hist_df['bet_result'] == 'won').sum()
-            lost = (hist_df['bet_result'] == 'lost').sum()
-            logger.info(f"Zapisano {len(hist_df)} zakładów do historical_bets ({won} won, {lost} lost).")
+            # 2. Zapis zakładów przez Pandas
+            if not hist_df.empty:
+                # KLUCZOWE: W SQLAlchemy 2.0 przekazujemy 'conn' do to_sql.
+                # Pandas wykryje, że transakcja jest już otwarta i NIE wywoła conn.commit()
+                hist_df.to_sql(
+                    name='historical_bets',
+                    con=conn,
+                    if_exists='append',
+                    index=False
+                )
+
+                won = (hist_df['bet_result'] == 'won').sum()
+                lost = (hist_df['bet_result'] == 'lost').sum()
+                logger.info(f"Zapisano {len(hist_df)} rekordów do historical_bets ({won} won, {lost} lost).")
+
+        # Tutaj transakcja jest już automatycznie zatwierdzona (po wyjściu z bloku with)
+        logger.info("Transakcja zakończona pomyślnie (Atomic Load OK).")
 
     except Exception as e:
-        logger.error(f"Błąd podczas ładowania wyników – pipeline zatrzymany: {e}", exc_info=True)
+        # Jeśli cokolwiek pójdzie nie tak wewnątrz 'with',
+        # SQLAlchemy automatycznie wywoła ROLLBACK.
+        logger.error(f"Błąd transakcji – dane nie zostały zapisane: {e}", exc_info=True)
         raise
 
 

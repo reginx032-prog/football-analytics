@@ -397,6 +397,14 @@ def main():
         logger.error("Nie udało się załadować danych. Kończę program.")
         return
 
+    # --- FILTR is_legit ---
+    legit_ids = set(stats_df[stats_df['is_legit'] == True]['team_id'])
+    upcoming_df = upcoming_df[
+        upcoming_df['home_id'].isin(legit_ids) &
+        upcoming_df['away_id'].isin(legit_ids)
+    ]
+    logger.info(f"Po filtrze is_legit: {len(upcoming_df)} meczów do analizy")
+
     # --- TRANSFORM ---
     main_df = attack_power(stats_df, league_stats_df, upcoming_df)
     main_df = deffence_power(main_df, stats_df)

@@ -96,9 +96,9 @@ def fetch_fixtures(league_id, league_name):
             match_xg = fetch_xg(f_id)
             time.sleep(0.05)  # Rate limiting
 
-            if any(v is None for v in [match_xg['home'], match_xg['away']]):
-                logger.warning(f"Brak danych xG dla meczu {f_id}, pomijam")
-                continue
+            is_legit = not any(v is None for v in [match_xg['home'], match_xg['away']])
+            if not is_legit:
+                logger.warning(f"Brak danych xG dla meczu {f_id}, zapisuję z is_legit=False")
 
             winner_id = h_id if gh > ga else (a_id if ga > gh else 0)
 
@@ -121,7 +121,8 @@ def fetch_fixtures(league_id, league_name):
                 'goals_away': ga,
                 'xg_home': match_xg['home'],
                 'xg_away': match_xg['away'],
-                'winner_id': winner_id
+                'winner_id': winner_id,
+                'is_legit': is_legit
             })
         return pd.DataFrame(fixtures_list)
     except requests.exceptions.Timeout:
@@ -162,8 +163,13 @@ def transform_l5_stats(df_fixtures):
             continue
 
         scored, conceded, xgf, xga, points = [], [], [], [], 0
+        is_legit = True
 
         for _, m in t_history.iterrows():
+            if not m.get('is_legit', True):
+                logger.warning(f"Mecz {m['fixture_id']} ma is_legit=False (drużyna {t_id}), flagowanie drużyny")
+                is_legit = False
+
             is_home = int(m['home_id']) == int(t_id)
 
             s = m['goals_home'] if is_home else m['goals_away']
@@ -171,14 +177,12 @@ def transform_l5_stats(df_fixtures):
             xf = m['xg_home'] if is_home else m['xg_away']
             xa = m['xg_away'] if is_home else m['xg_home']
 
-            if any(v is None for v in [s, c, xf, xa]):
-                logger.warning(f"Brak danych dla meczu {m['fixture_id']} (drużyna {t_id}), pomijam w L5")
-                continue
-
             scored.append(s)
             conceded.append(c)
-            xgf.append(xf)
-            xga.append(xa)
+            if xf is not None:
+                xgf.append(xf)
+            if xa is not None:
+                xga.append(xa)
 
             w_id = m['winner_id']
             if w_id == 0:
@@ -189,17 +193,18 @@ def transform_l5_stats(df_fixtures):
         l5_results.append({
             'team_id': t_id,
             'team_name': team['name'],
-            'avg_goals_scored': round(np.mean(scored), 2),
-            'avg_goals_conceded': round(np.mean(conceded), 2),
-            'avg_xg_for': round(np.mean(xgf), 2),
-            'avg_xg_against': round(np.mean(xga), 2),
-            'med_goals_scored': round(np.median(scored), 2),
-            'med_goals_conceded': round(np.median(conceded), 2),
-            'med_xg_for': round(np.median(xgf), 2),
-            'med_xg_against': round(np.median(xga), 2),
+            'avg_goals_scored': round(np.mean(scored), 2) if scored else None,
+            'avg_goals_conceded': round(np.mean(conceded), 2) if conceded else None,
+            'avg_xg_for': round(np.mean(xgf), 2) if xgf else None,
+            'avg_xg_against': round(np.mean(xga), 2) if xga else None,
+            'med_goals_scored': round(np.median(scored), 2) if scored else None,
+            'med_goals_conceded': round(np.median(conceded), 2) if conceded else None,
+            'med_xg_for': round(np.median(xgf), 2) if xgf else None,
+            'med_xg_against': round(np.median(xga), 2) if xga else None,
             'total_points_l5': points,
-            'luck_factor': round(np.mean(scored) - np.mean(xgf), 2),
-            'defense_luck_factor': round(np.mean(conceded) - np.mean(xga), 2)
+            'luck_factor': round(np.mean(scored) - np.mean(xgf), 2) if scored and xgf else None,
+            'defense_luck_factor': round(np.mean(conceded) - np.mean(xga), 2) if conceded and xga else None,
+            'is_legit': is_legit
         })
 
     l5_df = pd.DataFrame(l5_results)

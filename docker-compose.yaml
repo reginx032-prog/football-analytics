@@ -1,5 +1,36 @@
 version: '3.8'
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.11.2
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow_db/airflow
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+    # Projekt widoczny jako /opt/airflow/project
+    PYTHONPATH: /opt/airflow/project
+    # Zmienne projektu (DB_HOST=db — sieć wewnętrzna Docker)
+    API_KEY: ${API_KEY}
+    BASE_URL: https://v3.football.api-sports.io
+    SEASON: '2025'
+    DB_USER: admin
+    DB_PASSWORD: secret_password
+    DB_HOST: db
+    DB_PORT: '5432'
+    DB_NAME: football_data
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - .:/opt/airflow/project
+  depends_on:
+    airflow_db:
+      condition: service_healthy
+
 services:
+  # === TWOJA BAZA (bez zmian) ===
   db:
     image: postgres:15
     container_name: football_db_container
@@ -8,6 +39,8 @@ services:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: secret_password
       POSTGRES_DB: football_data
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
 
@@ -19,4 +52,76 @@ services:
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: admin
     ports:
-      - "8080:80"
+      - "8090:80"
+
+  # === BAZA AIRFLOW (osobna) ===
+  airflow_db:
+    image: postgres:15
+    container_name: airflow_db_container
+    restart: always
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+
+  # === AIRFLOW ===
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow_init
+    command: bash -c "airflow db init && airflow users create -u admin -p admin -f Admin -l Admin -r Admin -e admin@admin.com"
+    restart: on-failure
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow_webserver
+    command: webserver
+    ports:
+      - "8082:8080"
+    restart: always
+    depends_on:
+      - airflow-init
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow_scheduler
+    command: scheduler
+    restart: always
+    depends_on:
+      - airflow-init
+
+  # === BACKEND (Spring Boot) ===
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend_container
+    restart: always
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/football_data
+      SPRING_DATASOURCE_USERNAME: admin
+      SPRING_DATASOURCE_PASSWORD: secret_password
+    ports:
+      - "8081:8081"
+    depends_on:
+      - db
+
+  # === FRONTEND (React + nginx) ===
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend_container
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

@@ -215,6 +215,19 @@ def build_features(df_transformed: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# LOAD — zapis featurów do bazy danych
+# ---------------------------------------------------------------------------
+
+def load_features(features: dict) -> None:
+    """Łączy featury wszystkich sezonów i zapisuje atomicznie do tabeli xgb_features.
+    Przy każdym wywołaniu tabela jest nadpisywana (replace)."""
+    df_all = pd.concat(features.values(), ignore_index=True)
+    df_all.to_sql('xgb_features', engine, if_exists='replace', index=False)
+    logger.info(f"Zapisano {len(df_all)} wierszy do tabeli 'xgb_features' "
+                f"(sezony: {sorted(features.keys())})")
+
+
+# ---------------------------------------------------------------------------
 # SPLIT PER SEZON
 # ---------------------------------------------------------------------------
 
@@ -243,6 +256,4 @@ if __name__ == '__main__':
 
     features = {season: build_features(t_df) for season, t_df in transformed.items()}
 
-    for season, f_df in features.items():
-        f_df.to_csv(f'test_features_{season}.csv', index=False)
-    logger.info(f"Zapisano pliki test_features dla sezonów: {list(features.keys())}")
+    load_features(features)

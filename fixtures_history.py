@@ -8,8 +8,8 @@ from config import API_KEY, BASE_URL, HEADERS, TOP_20_LEAGUES, logger, engine
 # ---------------------------------------------------------------------------
 # Konfiguracja
 # ---------------------------------------------------------------------------
-HISTORICAL_SEASONS    = [2023, 2024, 2025]
-REQUEST_DELAY         = 0.4   # ~2.5 req/sek, bezpiecznie poniżej limitu
+HISTORICAL_SEASONS    = [2025]
+REQUEST_DELAY         = 1   # ~2.5 req/sek, bezpiecznie poniżej limitu
 PREFERRED_BOOKMAKER_ID = 8    # Bwin (spójnie z upcoming_odds.py)
 DEBUG_LIMIT           = None   # None = pobierz wszystko, int = limit meczów per liga (debug)
 
@@ -189,7 +189,7 @@ def fetch_fixtures(league_id, league_name, season, max_matches=None):
 def load_fixtures_history(df):
     """Zapisuje pełny DataFrame historyczny do tabeli fixtures_history."""
     try:
-        df.to_sql('fixtures_history', engine, if_exists='replace', index=False)
+        df.to_sql('fixtures_history', engine, if_exists='append', index=False)
         logger.info(f"Zapisano {len(df)} rekordów do tabeli 'fixtures_history'.")
     except Exception as e:
         logger.error(f"Błąd podczas zapisu fixtures_history: {e}", exc_info=True)
