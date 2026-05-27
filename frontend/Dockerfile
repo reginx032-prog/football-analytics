@@ -3,7 +3,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
 COPY . .
-RUN node_modules/.bin/vite build --mode production
+RUN npm run build -- --mode production
 
 FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html

@@ -52,7 +52,7 @@ services:
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: admin
     ports:
-      - "8090:80"
+      - "8080:80"
 
   # === BAZA AIRFLOW (osobna) ===
   airflow_db:
