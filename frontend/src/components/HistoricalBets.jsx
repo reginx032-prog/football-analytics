@@ -1,5 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { fetchHistoricalBets } from '../api/api.js'
+
+function SortIcon({ dir }) {
+  return <span className="sort-icon">{dir === 'asc' ? '↑' : dir === 'desc' ? '↓' : '↕'}</span>
+}
 
 const fmtDate = d => d
   ? new Date(d).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
@@ -14,6 +18,10 @@ export default function HistoricalBets() {
   const [data, setData]       = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
+  const [sortKey, setSortKey]             = useState('date')
+  const [sortDir, setSortDir]             = useState('desc')
+  const [selectedMarkets, setSelectedMarkets] = useState(new Set())
+  const [selectedLeagues, setSelectedLeagues] = useState(new Set())
 
   useEffect(() => {
     fetchHistoricalBets()
@@ -22,17 +30,110 @@ export default function HistoricalBets() {
       .finally(() => setLoading(false))
   }, [])
 
+  function handleSort(key) {
+    if (sortKey === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortKey(key)
+      setSortDir(key === 'date' ? 'desc' : 'desc')
+    }
+  }
+
+  const allMarkets = useMemo(() =>
+    data ? [...new Set(data.bets.map(b => b.market))].sort() : []
+  , [data])
+
+  const allLeagues = useMemo(() =>
+    data ? [...new Set(data.bets.map(b => b.leagueName))].sort() : []
+  , [data])
+
+  function toggleMarket(m) {
+    setSelectedMarkets(prev => {
+      const next = new Set(prev)
+      next.has(m) ? next.delete(m) : next.add(m)
+      return next
+    })
+  }
+
+  function toggleLeague(l) {
+    setSelectedLeagues(prev => {
+      const next = new Set(prev)
+      next.has(l) ? next.delete(l) : next.add(l)
+      return next
+    })
+  }
+
+  const filteredBets = useMemo(() => {
+    if (!data) return []
+    return data.bets.filter(b =>
+      (selectedMarkets.size === 0 || selectedMarkets.has(b.market)) &&
+      (selectedLeagues.size === 0 || selectedLeagues.has(b.leagueName))
+    )
+  }, [data, selectedMarkets, selectedLeagues])
+
+  const filteredStats = useMemo(() => {
+    if (!filteredBets.length) return null
+    const wonCount  = filteredBets.filter(b => b.betResult === 'won').length
+    const lostCount = filteredBets.length - wonCount
+    const totalPnl  = filteredBets.reduce((s, b) => s + (b.betResult === 'won' ? (b.bookieOdd - 1) * 100 : -100), 0)
+    const yieldPct  = totalPnl / (filteredBets.length * 100) * 100
+    const avgOdds   = filteredBets.reduce((s, b) => s + b.bookieOdd, 0) / filteredBets.length
+    return { totalBets: filteredBets.length, wonCount, lostCount, yieldPct, totalPnlPln: totalPnl, avgOdds }
+  }, [filteredBets])
+
+  const sortedBets = useMemo(() => {
+    if (!data) return []
+    return [...filteredBets].sort((a, b) => {
+      const va = a[sortKey]
+      const vb = b[sortKey]
+      if (va == null && vb == null) return 0
+      if (va == null) return 1
+      if (vb == null) return -1
+      const cmp = typeof va === 'string' ? va.localeCompare(vb, 'pl') : Number(va) - Number(vb)
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }, [filteredBets, sortKey, sortDir])
+
   if (loading) return <div className="status-box"><span className="spinner" />Ładowanie historii...</div>
   if (error)   return <div className="status-box error">⚠ Błąd: {error}</div>
   if (!data || !data.bets.length) return <div className="status-box">Brak zakończonych zakładów.</div>
 
-  const { bets, stats } = data
+  const stats = filteredStats || data.stats
 
   return (
     <div>
       <div className="section-header">
         <span className="section-title">Historia zakładów</span>
-        <span className="badge">{stats.totalBets} zakładów</span>
+        <span className="badge">{stats.totalBets} / {data.bets.length} zakładów</span>
+        <a
+          href="/api/historical-bets/export"
+          download="historical_bets.xlsx"
+          className="export-btn"
+        >
+          ⬇ Eksportuj do Excel
+        </a>
+      </div>
+      <div className="selector-pills" style={{marginBottom: '6px'}}>
+        {allMarkets.map(m => (
+          <button
+            key={m}
+            className={`pill ${selectedMarkets.has(m) ? 'pill-active' : ''}`}
+            onClick={() => toggleMarket(m)}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+      <div className="selector-pills" style={{marginBottom: '12px'}}>
+        {allLeagues.map(l => (
+          <button
+            key={l}
+            className={`pill ${selectedLeagues.has(l) ? 'pill-active' : ''}`}
+            onClick={() => toggleLeague(l)}
+          >
+            {l}
+          </button>
+        ))}
       </div>
 
       {/* Karta statystyk */}
@@ -68,20 +169,26 @@ export default function HistoricalBets() {
         <table className="data-table">
           <thead>
             <tr>
-              <th>Data</th>
+              <th className={`th-sortable ${sortKey === 'date' ? 'th-active' : ''}`} onClick={() => handleSort('date')}>
+                Data <SortIcon dir={sortKey === 'date' ? sortDir : null} />
+              </th>
               <th>Liga</th>
               <th>Mecz</th>
               <th>Rynek</th>
               <th>Fair</th>
-              <th>Kurs</th>
-              <th>Edge</th>
+              <th className={`th-sortable ${sortKey === 'bookieOdd' ? 'th-active' : ''}`} onClick={() => handleSort('bookieOdd')}>
+                Kurs <SortIcon dir={sortKey === 'bookieOdd' ? sortDir : null} />
+              </th>
+              <th className={`th-sortable ${sortKey === 'edge' ? 'th-active' : ''}`} onClick={() => handleSort('edge')}>
+                Edge <SortIcon dir={sortKey === 'edge' ? sortDir : null} />
+              </th>
               <th>Wynik meczu</th>
               <th>Zakład</th>
               <th>P&L</th>
             </tr>
           </thead>
           <tbody>
-            {bets.map(b => {
+            {sortedBets.map(b => {
               const key = `${b.fixtureId}-${b.market}`
               const isWon = b.betResult === 'won'
               const pnl = isWon ? (b.bookieOdd - 1) * 100 : -100

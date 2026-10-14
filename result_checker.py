@@ -4,19 +4,18 @@ import time
 import logging
 from sqlalchemy import text
 
-# --- KONFIGURACJA ---
-try:
-    from main import BASE_URL, HEADERS, logger, engine
-except ImportError:
-    print("❌ Błąd: Nie znaleziono pliku main.py lub brak w nim potrzebnych stałych.")
-    exit()
+from config import BASE_URL, HEADERS, logger, engine
 
 FINISHED_STATUSES = {'FT', 'AET', 'PEN', 'AWD', 'WO'}
 RATE_LIMIT_DELAY = 0.2
 
 
+# =============================================================================
+# TRANSFORM (czysta funkcja, bez I/O)
+# =============================================================================
+
 def evaluate_market(market, goals_home, goals_away):
-    """Zwraca True (wygrany), False (przegrany) lub None (nieznany rynek)."""
+    """TRANSFORM: Zwraca True (wygrany), False (przegrany) lub None (nieznany rynek)."""
     total = goals_home + goals_away
     if market == '1':
         return goals_home > goals_away
@@ -35,35 +34,26 @@ def evaluate_market(market, goals_home, goals_away):
     return None
 
 
-def save_to_historical(finished_matches):
+def transform_bet_results(vb_df, finished_matches, existing_keys):
     """
-    Czyta value_bets dla zakończonych meczów, ocenia każdy rynek
-    i zapisuje wyniki do tabeli historical_bets (append + deduplicacja).
+    TRANSFORM: Ocenia wyniki zakładów, deduplikuje względem istniejących rekordów.
+    Przyjmuje gotowe dane (bez I/O). Zwraca DataFrame gotowy do zapisu.
+
+    vb_df:            DataFrame z value_bets dla zakończonych meczów
     finished_matches: dict {fixture_id: (goals_home, goals_away)}
+    existing_keys:    set par (fixture_id, market) już zapisanych w historical_bets
     """
-    if not finished_matches:
-        return
-
-    fixture_ids = list(finished_matches.keys())
-
-    try:
-        vb_df = pd.read_sql(
-            text("SELECT * FROM value_bets WHERE fixture_id IN :ids"),
-            engine,
-            params={'ids': tuple(fixture_ids)}
-        )
-    except Exception as e:
-        logger.error(f"Błąd odczytu value_bets: {e}", exc_info=True)
-        return
-
-    if vb_df.empty:
-        logger.info("Brak value betów dla zakończonych meczów.")
-        return
+    if vb_df.empty or not finished_matches:
+        return pd.DataFrame()
 
     rows = []
     for _, row in vb_df.iterrows():
         f_id = int(row['fixture_id'])
         market = row['market']
+
+        if f_id not in finished_matches:
+            continue
+
         goals_home, goals_away = finished_matches[f_id]
         result = evaluate_market(market, goals_home, goals_away)
 
@@ -87,62 +77,42 @@ def save_to_historical(finished_matches):
         })
 
     if not rows:
-        logger.info("Brak zakładów do zapisania w historii.")
-        return
+        return pd.DataFrame()
 
     hist_df = pd.DataFrame(rows)
 
-    # Deduplicacja — nie zapisuj ponownie tych samych fixture_id + market
-    try:
-        existing = pd.read_sql(
-            text("SELECT fixture_id, market FROM historical_bets"),
-            engine
-        )
-        if not existing.empty:
-            existing_keys = set(zip(existing['fixture_id'].astype(int), existing['market']))
-            hist_df = hist_df[~hist_df.apply(
-                lambda r: (int(r['fixture_id']), r['market']) in existing_keys, axis=1
-            )]
-    except Exception:
-        pass  # Tabela jeszcze nie istnieje — pierwsze uruchomienie
+    if existing_keys:
+        hist_df = hist_df[~hist_df.apply(
+            lambda r: (int(r['fixture_id']), r['market']) in existing_keys, axis=1
+        )]
 
-    if hist_df.empty:
-        logger.info("Wszystkie zakłady już są w historii (duplikaty pominięte).")
-        return
-
-    try:
-        hist_df.to_sql('historical_bets', engine, if_exists='append', index=False)
-        won  = (hist_df['bet_result'] == 'won').sum()
-        lost = (hist_df['bet_result'] == 'lost').sum()
-        logger.info(f"Zapisano {len(hist_df)} zakładów do historical_bets ({won} won, {lost} lost).")
-    except Exception as e:
-        logger.error(f"Błąd zapisu do historical_bets: {e}", exc_info=True)
+    return hist_df
 
 
-def check_and_update_finished():
-    """
-    1. Pobiera z 'upcoming_odds' mecze z is_finished='no'.
-    2. Odpytuje API-Football dla każdego fixture_id.
-    3. Zakończone mecze → UPDATE is_finished='yes' w upcoming_odds.
-    4. Zakończone mecze → ocena zakładów i zapis do historical_bets.
-    """
+# =============================================================================
+# EXTRACT
+# =============================================================================
+
+def extract_pending_fixture_ids():
+    """EXTRACT: Pobiera ID niezakończonych meczów z tabeli upcoming_odds."""
     try:
         df = pd.read_sql(
             "SELECT fixture_id FROM upcoming_odds WHERE is_finished = 'no'",
             engine
         )
+        return df['fixture_id'].tolist()
     except Exception as e:
         logger.error(f"Błąd odczytu upcoming_odds: {e}", exc_info=True)
-        return
+        return []
 
-    if df.empty:
-        logger.info("Brak meczów do sprawdzenia (wszystkie mają is_finished='yes').")
-        return
 
-    fixture_ids = df['fixture_id'].tolist()
+def extract_finished_results(fixture_ids):
+    """
+    EXTRACT: Odpytuje API-Football dla każdego fixture_id.
+    Zwraca dict {fixture_id: (goals_home, goals_away)} tylko dla zakończonych meczów.
+    """
+    finished = {}
     logger.info(f"Sprawdzam {len(fixture_ids)} meczów...")
-
-    finished_matches = {}  # {fixture_id: (goals_home, goals_away)}
 
     for f_id in fixture_ids:
         try:
@@ -162,7 +132,7 @@ def check_and_update_finished():
                     gh = fixture_data.get('goals', {}).get('home')
                     ga = fixture_data.get('goals', {}).get('away')
                     if gh is not None and ga is not None:
-                        finished_matches[int(f_id)] = (int(gh), int(ga))
+                        finished[int(f_id)] = (int(gh), int(ga))
                         logger.info(f"✔ Mecz {f_id} zakończony ({gh}:{ga}, status: {status})")
                     else:
                         logger.warning(f"Mecz {f_id} zakończony ale brak danych o golach")
@@ -180,27 +150,110 @@ def check_and_update_finished():
 
         time.sleep(RATE_LIMIT_DELAY)
 
+    return finished
+
+
+def extract_value_bets(fixture_ids):
+    """EXTRACT: Pobiera zakłady z tabeli value_bets dla podanych fixture_ids."""
+    try:
+        vb_df = pd.read_sql(
+            text("SELECT * FROM value_bets WHERE fixture_id IN :ids"),
+            engine,
+            params={'ids': tuple(fixture_ids)}
+        )
+        return vb_df
+    except Exception as e:
+        logger.error(f"Błąd odczytu value_bets: {e}", exc_info=True)
+        return pd.DataFrame()
+
+
+def extract_existing_historical_keys():
+    """EXTRACT: Pobiera istniejące pary (fixture_id, market) z historical_bets do deduplicacji."""
+    try:
+        existing = pd.read_sql(
+            text("SELECT fixture_id, market FROM historical_bets"),
+            engine
+        )
+        if not existing.empty:
+            return set(zip(existing['fixture_id'].astype(int), existing['market']))
+        return set()
+    except Exception:
+        return set()
+
+
+# =============================================================================
+# LOAD
+# =============================================================================
+
+def load_results(finished_ids, hist_df):
+    """
+    LOAD: Aktualizuje is_finished i zapisuje historical_bets w jednej transakcji.
+    Używamy engine.begin(), aby zapewnić automatyczny COMMIT na końcu bloku
+    lub ROLLBACK w przypadku jakiegokolwiek błędu.
+    """
+    try:
+        # engine.begin() otwiera połączenie i transakcję jednocześnie
+        with engine.begin() as conn:
+            # 1. Aktualizacja statusu meczów
+            conn.execute(
+                text("UPDATE upcoming_odds SET is_finished = 'yes' WHERE fixture_id IN :ids"),
+                {'ids': tuple(finished_ids)}
+            )
+            logger.info(f"Zaktualizowano {len(finished_ids)} meczów w upcoming_odds.")
+
+            # 2. Zapis zakładów przez Pandas
+            if not hist_df.empty:
+                # KLUCZOWE: W SQLAlchemy 2.0 przekazujemy 'conn' do to_sql.
+                # Pandas wykryje, że transakcja jest już otwarta i NIE wywoła conn.commit()
+                hist_df.to_sql(
+                    name='historical_bets',
+                    con=conn,
+                    if_exists='append',
+                    index=False
+                )
+
+                won = (hist_df['bet_result'] == 'won').sum()
+                lost = (hist_df['bet_result'] == 'lost').sum()
+                logger.info(f"Zapisano {len(hist_df)} rekordów do historical_bets ({won} won, {lost} lost).")
+
+        # Tutaj transakcja jest już automatycznie zatwierdzona (po wyjściu z bloku with)
+        logger.info("Transakcja zakończona pomyślnie (Atomic Load OK).")
+
+    except Exception as e:
+        # Jeśli cokolwiek pójdzie nie tak wewnątrz 'with',
+        # SQLAlchemy automatycznie wywoła ROLLBACK.
+        logger.error(f"Błąd transakcji – dane nie zostały zapisane: {e}", exc_info=True)
+        raise
+
+
+# =============================================================================
+# ORCHESTRATOR
+# =============================================================================
+
+def check_and_update_finished():
+    """
+    Sprawdza zakończone mecze i aktualizuje historię zakładów (E → T → L).
+    """
+    # --- EXTRACT ---
+    fixture_ids = extract_pending_fixture_ids()
+    if not fixture_ids:
+        logger.info("Brak meczów do sprawdzenia (wszystkie mają is_finished='yes').")
+        return
+
+    finished_matches = extract_finished_results(fixture_ids)
     if not finished_matches:
         logger.info("Brak nowych zakończonych meczów.")
         return
 
     finished_ids = list(finished_matches.keys())
+    vb_df = extract_value_bets(finished_ids)
+    existing_keys = extract_existing_historical_keys()
 
-    # UPDATE upcoming_odds
-    try:
-        with engine.connect() as conn:
-            conn.execute(
-                text("UPDATE upcoming_odds SET is_finished = 'yes' WHERE fixture_id IN :ids"),
-                {'ids': tuple(finished_ids)}
-            )
-            conn.commit()
-        logger.info(f"Zaktualizowano {len(finished_ids)} meczów → is_finished='yes'.")
-    except Exception as e:
-        logger.error(f"Błąd podczas aktualizacji bazy: {e}", exc_info=True)
-        return
+    # --- TRANSFORM ---
+    hist_df = transform_bet_results(vb_df, finished_matches, existing_keys)
 
-    # Zapis do historical_bets
-    save_to_historical(finished_matches)
+    # --- LOAD ---
+    load_results(finished_ids, hist_df)
 
 
 if __name__ == "__main__":

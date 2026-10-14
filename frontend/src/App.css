@@ -349,8 +349,23 @@ body {
 .section-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   margin-bottom: 14px;
+}
+
+.export-btn {
+  margin-left: auto;
+  padding: 5px 12px;
+  background: #1e7e34;
+  color: #fff;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+.export-btn:hover {
+  background: #155724;
 }
 
 .section-title {

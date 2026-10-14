@@ -1,5 +1,7 @@
-# Environment variables
+# Environment variables and secrets
 .env
+.env.*
+!.env.example
 
 # Python
 __pycache__/
@@ -12,11 +14,20 @@ dist/
 build/
 *.egg
 
-# Virtual Environment
+# Virtual environments
 .venv/
 venv/
 ENV/
 env/
+
+# Frontend dependencies and output
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Airflow runtime artifacts
+logs/
+plugins/
 
 # IDE
 .idea/
@@ -25,11 +36,8 @@ env/
 *.swo
 *~
 
-# Logs
+# Logs and local databases
 *.log
-football_data.log
-
-# Database
 *.db
 *.sqlite
 *.sqlite3
