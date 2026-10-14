@@ -1,31 +1,31 @@
 # Football Analytics
 
-System do analizy meczów piłkarskich i wykrywania value betów oparty na statystykach
+System do analizy meczów piłkarskich i wykrywania value betów oparty na statystykach (forma, xG, tabela).
 
 ## Architektura
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                     Docker Compose                       │
+│                     Docker Compose                      │
 │                                                         │
-│  ┌──────────┐    ┌──────────┐    ┌──────────────────┐  │
-│  │  React   │───▶│  Spring  │───▶│   PostgreSQL      │  │
-│  │ Frontend │    │   Boot   │    │  (football_data)  │  │
-│  │  :80     │    │  :8081   │    │     :5433         │  │
-│  └──────────┘    └──────────┘    └──────────────────┘  │
+│  ┌──────────┐    ┌──────────┐    ┌──────────────────┐   │
+│  │  React   │───▶│  Spring  │───▶│   PostgreSQL     │   │
+│  │ Frontend │    │   Boot   │    │  (football_data) │   │
+│  │  :80     │    │  :8081   │    │     :5433        │   │
+│  └──────────┘    └──────────┘    └──────────────────┘   │
 │                                                         │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │                  Apache Airflow                  │   │
-│  │  ┌─────────────────────────────────────────┐    │   │
-│  │  │  Pre-match pipeline (piątek 09:00 UTC)  │    │   │
-│  │  │  Teams → Standings → Fixtures → Odds    │    │   │
-│  │  │  → Bet Engine                           │    │   │
-│  │  └─────────────────────────────────────────┘    │   │
-│  │  ┌─────────────────────────────────────────┐    │   │
-│  │  │  Result checker (codziennie 23:00 UTC)  │    │   │
-│  │  └─────────────────────────────────────────┘    │   │
-│  │  Webserver :8082 │ DB (airflow) :5434           │   │
-│  └─────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │                  Apache Airflow                 │    │
+│  │  ┌─────────────────────────────────────────┐    │    │
+│  │  │ Pre-match pipeline (poniedz. 09:00 UTC) │    │    │
+│  │  │ Teams → Standings → Fixtures → Odds     │    │    │
+│  │  │ → Bet Engine                            │    │    │
+│  │  └─────────────────────────────────────────┘    │    │
+│  │  ┌─────────────────────────────────────────┐    │    │
+│  │  │ Result checker (codziennie 23:00 UTC)   │    │    │
+│  │  └─────────────────────────────────────────┘    │    │
+│  │  Webserver :8082 │ DB (airflow) :5434           │    │
+│  └─────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -35,17 +35,19 @@ System do analizy meczów piłkarskich i wykrywania value betów oparty na staty
 |---------|-------------|
 | Frontend | React 18, Vite, nginx |
 | Backend | Java 21, Spring Boot 4, Hibernate |
-| ETL / Pipeline | Python 3.12, pandas, scipy |
+| ETL / Pipeline | Python 3.12, pandas, NumPy, SciPy |
 | Scheduler | Apache Airflow 2.11.2 |
 | Baza danych | PostgreSQL 15 |
 | Infrastruktura | Docker Compose |
 
 ## Funkcjonalności
 
-- **Tabele ligowe** — aktualne standings z top lig europejskich
+- **Tabele ligowe** — aktualne standings z top lig
 - **Nadchodzące mecze** — kursy bukmacherskie na mecze tygodnia
 - **Value Bets** — wykryte zakłady z dodatnim edge względem fair odds
 - **Historical Bets** — historia zakładów z wynikami i yield
+- **Historia meczów** — wyniki i xG z poprzednich sezonów (`fixtures_history`) jako baza pod model ML
+- **Featury pod XGBoost** — rolling statystyki drużyn liczone bez wycieku danych (`xgb_features`)
 
 ## Jak uruchomić
 
@@ -54,7 +56,7 @@ System do analizy meczów piłkarskich i wykrywania value betów oparty na staty
 
 ### Konfiguracja
 
-Utwórz plik `.env` w głównym katalogu:
+Skopiuj `.env.example` do `.env` i uzupełnij klucz API:
 
 ```env
 API_KEY=twoj_klucz_api_football
@@ -94,7 +96,9 @@ football-analytics/
 ├── upcoming_odds.py            # Kolektor kursów bukmacherskich
 ├── bet_engine.py               # Silnik wykrywania value betów
 ├── result_checker.py           # Weryfikator wyników zakładów
-├── config.py                   # Konfiguracja połączenia z DB
+├── fixtures_history.py         # Kolektor historii meczów (wyniki, xG, kursy)
+├── xgb_model.py                # Feature engineering pod model XGBoost
+├── config.py                   # Konfiguracja API, ligi, połączenie z DB
 ├── docker-compose.yaml
 └── requirements.txt
 ```
@@ -102,16 +106,16 @@ football-analytics/
 ## Pipeline
 
 ```
-Piątek 09:00 UTC (automatycznie)
-─────────────────────────────────
+Poniedziałek 09:00 UTC (football_pre_match_pipeline)
+────────────────────────────────────────────────────
 collect_teams
     └─▶ collect_standings
             └─▶ collect_fixtures
                     └─▶ collect_upcoming_odds
                                 └─▶ run_bet_engine
 
-Codziennie 23:00 UTC
-─────────────────────────────────
+Codziennie 23:00 UTC (football_result_checker)
+────────────────────────────────────────────────────
 check_results  (aktualizuje historical_bets)
 ```
 
@@ -122,3 +126,17 @@ Bet Engine porównuje kursy bukmacherskie z kursami fair obliczonymi na podstawi
 ```
 edge = (1 / fair_odd) - (1 / bookmaker_odd) > próg
 ```
+
+## Dane historyczne i featury (ręcznie, poza Airflow)
+
+```bash
+python fixtures_history.py   # pobiera historię meczów do tabeli fixtures_history
+python xgb_model.py          # buduje featury i zapisuje je do tabeli xgb_features
+```
+
+`xgb_model.py` bierze 12 lig z dobrym pokryciem xG, uzupełnia brakujące xG golami i dla każdego meczu tworzy 2 wiersze (perspektywa gospodarza i gościa) z:
+
+- formą drużyny i rywala z ostatnich 5 i 10 meczów (xG, gole, W/D/L, BTTS),
+- liczbą rozegranych meczów (wiersz powstaje dopiero, gdy obie drużyny mają ≥ 10 meczów w sezonie).
+
+Featury liczone są per sezon, wyłącznie z meczów rozegranych **przed** danym spotkaniem.
