@@ -8,7 +8,7 @@ from config import API_KEY, BASE_URL, HEADERS, TOP_20_LEAGUES, logger, engine
 # ---------------------------------------------------------------------------
 # Konfiguracja
 # ---------------------------------------------------------------------------
-HISTORICAL_SEASONS    = [2025]
+HISTORICAL_SEASONS    = [2026]
 REQUEST_DELAY         = 1   # ~2.5 req/sek, bezpiecznie poniżej limitu
 PREFERRED_BOOKMAKER_ID = 8    # Bwin (spójnie z upcoming_odds.py)
 DEBUG_LIMIT           = None   # None = pobierz wszystko, int = limit meczów per liga (debug)
@@ -19,17 +19,94 @@ class RateLimitError(Exception):
     pass
 
 
-def _check_rate_limit(body, context=''):
-    """Rzuca RateLimitError jeśli API zwróciło komunikat o limicie w body (HTTP 200)."""
-    err = body.get('errors', {})
-    if isinstance(err, dict):
-        msg = err.get('requests', '') or err.get('rateLimit', '')
-    elif isinstance(err, list) and err:
-        msg = str(err[0])
-    else:
-        msg = ''
-    if msg and 'limit' in msg.lower():
-        raise RateLimitError(f"Dzienny limit API wyczerpany ({context}): {msg}")
+# Konfiguracja ponawiania przy limitach / błędach serwera
+MAX_API_RETRIES = 5
+PER_MINUTE_WAIT = 61   # okno limitu "na minutę" w API-Football (300 req/min na planie Pro)
+SERVER_ERR_WAIT = 5    # 503 / timeout
+
+
+def _daily_remaining(res):
+    """Dzienny zapas zapytań z nagłówka x-ratelimit-requests-remaining (None gdy nieznany)."""
+    try:
+        return int(res.headers.get('x-ratelimit-requests-remaining'))
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_daily_exhausted(res):
+    rem = _daily_remaining(res)
+    return rem is not None and rem <= 0
+
+
+def _retry_after(res):
+    """Ile sekund czekać po 429 — z nagłówka Retry-After albo domyślnie okno minutowe."""
+    try:
+        return int(res.headers.get('Retry-After'))
+    except (TypeError, ValueError):
+        return PER_MINUTE_WAIT
+
+
+def _api_get(url, params, context=''):
+    """
+    GET do API-Football z rozróżnieniem DWÓCH różnych limitów:
+      • limit DZIENNY (x-ratelimit-requests-remaining == 0 lub errors.requests)
+        → RateLimitError (fatal, trzeba czekać do jutra),
+      • limit NA MINUTĘ (HTTP 429 lub errors.rateLimit przy HTTP 200, gdy dzienny zapas > 0)
+        → odczekanie i ponowienie (przejściowe),
+      • 503 / timeout → ponowienie.
+    Zwraca sparsowane body (dict) albo None, gdy mimo prób nie udało się pobrać.
+    """
+    for attempt in range(1, MAX_API_RETRIES + 1):
+        try:
+            res = requests.get(url, headers=HEADERS, params=params, timeout=15)
+        except requests.exceptions.Timeout:
+            logger.warning(f"Timeout {context}, próba {attempt}/{MAX_API_RETRIES}, czekam {SERVER_ERR_WAIT}s...")
+            time.sleep(SERVER_ERR_WAIT)
+            continue
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Błąd HTTP {context}: {e}")
+            return None
+
+        # HTTP 429 — limit na minutę, chyba że wyczerpany jest też zapas dzienny
+        if res.status_code == 429:
+            if _is_daily_exhausted(res):
+                raise RateLimitError(f"Dzienny limit API wyczerpany ({context}).")
+            wait = _retry_after(res)
+            logger.warning(f"Limit na minutę (429) {context}; dzienny zapas: {_daily_remaining(res)}. "
+                           f"Czekam {wait}s i ponawiam ({attempt}/{MAX_API_RETRIES})...")
+            time.sleep(wait)
+            continue
+
+        if res.status_code == 503:
+            logger.warning(f"503 {context}, próba {attempt}/{MAX_API_RETRIES}, czekam {SERVER_ERR_WAIT}s...")
+            time.sleep(SERVER_ERR_WAIT)
+            continue
+
+        try:
+            res.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Błąd HTTP {context}: {e}")
+            return None
+
+        body = res.json()
+        err = body.get('errors')
+        if isinstance(err, dict) and err:
+            daily_msg = err.get('requests', '')
+            if daily_msg and 'limit' in daily_msg.lower():
+                raise RateLimitError(f"Dzienny limit API wyczerpany ({context}): {daily_msg}")
+            minute_msg = err.get('rateLimit', '')
+            if minute_msg:
+                if _is_daily_exhausted(res):
+                    raise RateLimitError(f"Dzienny limit API wyczerpany ({context}): {minute_msg}")
+                logger.warning(f"Limit na minutę {context}: {minute_msg}. "
+                               f"Czekam {PER_MINUTE_WAIT}s i ponawiam ({attempt}/{MAX_API_RETRIES})...")
+                time.sleep(PER_MINUTE_WAIT)
+                continue
+            logger.warning(f"API zwróciło errors {context}: {err}")  # inny błąd API, nie limit
+        return body
+
+    logger.error(f"{context}: wyczerpano {MAX_API_RETRIES} prób.")
+    return None
 
 # ---------------------------------------------------------------------------
 # EXTRACT — ligi z bazy do DataFrame
@@ -49,48 +126,25 @@ def load_leagues_df():
 # EXTRACT — xG dla pojedynczego meczu
 # ---------------------------------------------------------------------------
 
-def fetch_xg(fixture_id, retries=3, retry_delay=5):
-    """Pobiera xG z /fixtures/statistics. Retry przy 503. Zwraca None jeśli brak danych."""
-    url = f"{BASE_URL}/fixtures/statistics"
+def fetch_xg(fixture_id):
+    """Pobiera xG z /fixtures/statistics. Zwraca {'home','away'} (None gdy brak danych)."""
     xg = {'home': None, 'away': None}
-    for attempt in range(1, retries + 1):
-        try:
-            res = requests.get(url, headers=HEADERS, params={'fixture': fixture_id}, timeout=10)
-            if res.status_code == 429:
-                remaining = res.headers.get('x-ratelimit-requests-remaining', '?')
-                raise RateLimitError(f"Dzienny limit API wyczerpany (fixture {fixture_id}), pozostało: {remaining}")
-            if res.status_code == 503:
-                logger.warning(f"503 xG fixture {fixture_id}, próba {attempt}/{retries}, czekam {retry_delay}s...")
-                time.sleep(retry_delay)
-                continue
-            res.raise_for_status()
-            body = res.json()
-            _check_rate_limit(body, f'xG fixture {fixture_id}')
-            data = body.get('response', [])
-            if len(data) < 2:
-                return xg
-            for i, team_data in enumerate(data):
-                side = 'home' if i == 0 else 'away'
-                for stat in team_data.get('statistics', []):
-                    if stat.get('type') == 'expected_goals':
-                        val = stat.get('value')
-                        try:
-                            xg[side] = float(val) if val not in (None, '', 'None') else None
-                        except (ValueError, TypeError):
-                            pass
-                        break
-            return xg
-        except requests.exceptions.Timeout:
-            logger.warning(f"Timeout xG fixture {fixture_id}, próba {attempt}/{retries}")
-            time.sleep(retry_delay)
-        except RateLimitError:
-            raise
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Błąd HTTP xG fixture {fixture_id}: {e}")
-            break
-        except Exception as e:
-            logger.error(f"Nieoczekiwany błąd xG fixture {fixture_id}: {e}", exc_info=True)
-            break
+    body = _api_get(f"{BASE_URL}/fixtures/statistics", {'fixture': fixture_id}, f'xG fixture {fixture_id}')
+    if not body:
+        return xg
+    data = body.get('response', [])
+    if len(data) < 2:
+        return xg
+    for i, team_data in enumerate(data):
+        side = 'home' if i == 0 else 'away'
+        for stat in team_data.get('statistics', []):
+            if stat.get('type') == 'expected_goals':
+                val = stat.get('value')
+                try:
+                    xg[side] = float(val) if val not in (None, '', 'None') else None
+                except (ValueError, TypeError):
+                    pass
+                break
     return xg
 
 
@@ -107,22 +161,19 @@ def fetch_fixtures(league_id, league_name, season, max_matches=None):
     zapisuje None, żeby nie tracić danych historycznych.
     """
     logger.info(f"  [{season}] {league_name} ...")
-    url = f"{BASE_URL}/fixtures"
-    params = {'league': league_id, 'season': season, 'status': 'FT'}
-    try:
-        res = requests.get(url, headers=HEADERS, params=params, timeout=15)
-        if res.status_code == 429:
-            remaining = res.headers.get('x-ratelimit-requests-remaining', '?')
-            raise RateLimitError(f"Dzienny limit API wyczerpany przy [{season}] {league_name}, pozostało: {remaining}")
-        res.raise_for_status()
-        body = res.json()
-        _check_rate_limit(body, f'fixtures [{season}] {league_name}')
-        all_matches = body.get('response', [])
-        if not all_matches:
-            logger.warning(f"  [{season}] {league_name} — brak meczów")
-            return pd.DataFrame()
+    body = _api_get(f"{BASE_URL}/fixtures",
+                    {'league': league_id, 'season': season, 'status': 'FT'},
+                    f'fixtures [{season}] {league_name}')
+    if not body:
+        return pd.DataFrame()
 
-        fixtures_list = []
+    all_matches = body.get('response', [])
+    if not all_matches:
+        logger.warning(f"  [{season}] {league_name} — brak meczów")
+        return pd.DataFrame()
+
+    fixtures_list = []
+    try:
         for item in all_matches:
             if max_matches is not None and len(fixtures_list) >= max_matches:
                 break
@@ -140,7 +191,7 @@ def fetch_fixtures(league_id, league_name, season, max_matches=None):
                 logger.warning(f"  Niepełne dane meczu {f_id}, pomijam")
                 continue
 
-            xg   = fetch_xg(f_id)
+            xg = fetch_xg(f_id)
             time.sleep(REQUEST_DELAY)
 
             try:
@@ -165,21 +216,13 @@ def fetch_fixtures(league_id, league_name, season, max_matches=None):
                 'xg_away':       xg['away'],
                 'winner_id':     h_id if gh > ga else (a_id if ga > gh else 0),
             })
-
-        logger.info(f"  [{season}] {league_name} — pobrano {len(fixtures_list)} meczów")
-        return pd.DataFrame(fixtures_list)
-
     except RateLimitError:
-        raise
-    except requests.exceptions.Timeout:
-        logger.error(f"  Timeout fixtures {league_name} {season}")
-        return pd.DataFrame()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"  Błąd HTTP fixtures {league_name} {season}: {e}")
-        return pd.DataFrame()
+        raise  # dzienny limit — przerwij, run_collection zapisze zebrane dane
     except Exception as e:
         logger.error(f"  Nieoczekiwany błąd {league_name} {season}: {e}", exc_info=True)
-        return pd.DataFrame()
+
+    logger.info(f"  [{season}] {league_name} — pobrano {len(fixtures_list)} meczów")
+    return pd.DataFrame(fixtures_list)
 
 
 # ---------------------------------------------------------------------------

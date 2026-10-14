@@ -1,6 +1,7 @@
 """
 xgb_model.py — alternatywny model XGBoost dla Dixon-Colesa.
 """
+import numpy as np
 import pandas as pd
 from statistics import mean
 from config import engine, logger
@@ -22,6 +23,10 @@ XGB_LEAGUES = {
     253: "Major League Soccer",
     40:  "Championship",
 }
+
+# Mecz ligi liczy się do kontekstu lg_* dopiero, gdy zaczął się co najmniej tyle przed
+# rozpoczęciem przewidywanego meczu (90 min + przerwa + doliczony czas z zapasem).
+LEAGUE_CTX_BUFFER = pd.Timedelta(minutes=150)
 
 
 # ---------------------------------------------------------------------------
@@ -64,153 +69,152 @@ def impute_xg(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# TRANSFORM — rozbicie meczu na 2 wiersze (perspektywa każdej drużyny)
+# FEATURE HELPERS — rekord historii + rolling stats z okna
 # ---------------------------------------------------------------------------
 
-def transform(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Zamienia DataFrame meczowy (1 wiersz = 1 mecz) na DataFrame drużynowy
-    (1 wiersz = 1 występ drużyny). Każdy mecz generuje 2 wiersze.
-    Wynik posortowany po dacie — gotowy do iteracji ze słownikiem.
-    """
-    home = pd.DataFrame({
-        'fixture_id':    df['fixture_id'],
-        'date':          df['date'],
-        'season':        df['season'],
-        'league_id':     df['league_id'],
-        'league_name':   df['league_name'],
-        'round_number':  df['round_number'],
-        'team_id':       df['home_id'],
-        'team_name':     df['home_name'],
-        'opponent_id':   df['away_id'],
-        'opponent_name': df['away_name'],
-        'is_home':       1,
-        'goals_scored':    df['goals_home'],
-        'goals_conceded':  df['goals_away'],
-        'xg_scored':       df['xg_home'],
-        'xg_conceded':     df['xg_away'],
-    })
+def _team_record(scored, conceded, xg_scored, xg_conceded) -> dict:
+    """Pojedynczy występ drużyny zapisywany do historii (z perspektywy tej drużyny)."""
+    return {
+        'xg_scored':      xg_scored,
+        'xg_conceded':    xg_conceded,
+        'goals_scored':   scored,
+        'goals_conceded': conceded,
+        'won':            int(scored > conceded),
+        'drawn':          int(scored == conceded),
+        'lost':           int(scored < conceded),
+        'btts':           int(scored > 0 and conceded > 0),
+    }
 
-    away = pd.DataFrame({
-        'fixture_id':    df['fixture_id'],
-        'date':          df['date'],
-        'season':        df['season'],
-        'league_id':     df['league_id'],
-        'league_name':   df['league_name'],
-        'round_number':  df['round_number'],
-        'team_id':       df['away_id'],
-        'team_name':     df['away_name'],
-        'opponent_id':   df['home_id'],
-        'opponent_name': df['home_name'],
-        'is_home':       0,
-        'goals_scored':    df['goals_away'],
-        'goals_conceded':  df['goals_home'],
-        'xg_scored':       df['xg_away'],
-        'xg_conceded':     df['xg_home'],
-    })
 
-    result = pd.concat([home, away]).sort_values('date').reset_index(drop=True)
-    logger.info(f"Sezon {result['season'].iloc[0]}: transform → {len(result)} wierszy "
-                f"({len(df)} meczów × 2)")
-    return result
+def _rolling(hist: list, prefix: str) -> dict:
+    """Rolling featury last5 i last10 z historii drużyny.
+    prefix='' dla drużyny, 'opp_' dla rywala. Zakłada len(hist) >= 10."""
+    feats = {}
+    for window, tag in ((hist[-5:], 'last5'), (hist[-10:], 'last10')):
+        feats[f'{prefix}xg_scored_{tag}']      = mean(x['xg_scored']      for x in window)
+        feats[f'{prefix}xg_conceded_{tag}']    = mean(x['xg_conceded']    for x in window)
+        feats[f'{prefix}goals_scored_{tag}']   = mean(x['goals_scored']   for x in window)
+        feats[f'{prefix}goals_conceded_{tag}'] = mean(x['goals_conceded'] for x in window)
+        feats[f'{prefix}won_{tag}']            = mean(x['won']            for x in window)
+        feats[f'{prefix}drawn_{tag}']          = mean(x['drawn']          for x in window)
+        feats[f'{prefix}lost_{tag}']           = mean(x['lost']           for x in window)
+        feats[f'{prefix}btts_{tag}']           = mean(x['btts']           for x in window)
+    return feats
+
+
+def _league_context(df: pd.DataFrame) -> dict:
+    """
+    Średnie ligowe (gole i xG gospodarzy / gości) z meczów tej ligi ZAKOŃCZONYCH przed
+    rozpoczęciem meczu — liczą się tylko mecze, które zaczęły się co najmniej
+    LEAGUE_CTX_BUFFER wcześniej (mecze trwające w chwili startu są pomijane, także
+    gdy wieczorna kolejka MLS / Brazylii przechodzi przez północ UTC).
+    Oczekuje danych jednego sezonu. Zwraca {fixture_id: {lg_matches, lg_goals_home, ...}}.
+    """
+    cols = ['goals_home', 'goals_away', 'xg_home', 'xg_away']
+    ctx = {}
+    for _, g in df.sort_values(['date', 'fixture_id']).groupby('league_id'):
+        sums = np.vstack([np.zeros(len(cols)), g[cols].to_numpy(dtype=float).cumsum(axis=0)])
+        n_done = g['date'].searchsorted(g['date'] - LEAGUE_CTX_BUFFER, side='right')
+        for fid, n, s in zip(g['fixture_id'], n_done, sums[n_done]):
+            ctx[fid] = {'lg_matches': float(n) if n else np.nan,
+                        **{f'lg_{c}': (s[i] / n if n else np.nan) for i, c in enumerate(cols)}}
+    return ctx
+
+
+def _league_feats(ctx: dict, is_home: bool) -> dict:
+    """Kontekst ligi z perspektywy drużyny: *_for = strona drużyny, *_against = strona rywala."""
+    side, opp = ('home', 'away') if is_home else ('away', 'home')
+    return {
+        'lg_matches':       ctx['lg_matches'],
+        'lg_goals_for':     ctx[f'lg_goals_{side}'],
+        'lg_goals_against': ctx[f'lg_goals_{opp}'],
+        'lg_xg_for':        ctx[f'lg_xg_{side}'],
+        'lg_xg_against':    ctx[f'lg_xg_{opp}'],
+    }
 
 
 # ---------------------------------------------------------------------------
-# BUILD FEATURES — rolling stats per drużyna (poziom drużyny)
+# BUILD FEATURES — iteracja PO MECZU (bez wycieku danych)
 # ---------------------------------------------------------------------------
 
-def build_features(df_transformed: pd.DataFrame) -> pd.DataFrame:
+def build_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Iteruje chronologicznie przez występy drużyn i buduje rolling featury
-    ze słownika historii. Zwraca tylko wiersze gdzie drużyna rozegrała >= 10 meczów.
+    Iteruje chronologicznie po MECZACH (1 wiersz wejścia = 1 mecz) i dla każdego
+    buduje 2 wiersze treningowe (perspektywa gospodarza i gościa) z rolling featurów
+    ze słownika historii.
+
+    Brak wycieku danych: featury OBU drużyn liczone są wyłącznie z historii SPRZED
+    meczu, a historia obu zespołów jest aktualizowana dopiero PO zbudowaniu wierszy —
+    dzięki czemu rywal nigdy nie "widzi" przewidywanego meczu we własnym oknie.
+
+    Każdy wiersz dostaje też kontekst ligi (lg_*) — średnie z meczów zakończonych przed jego startem.
+
+    Zwraca tylko mecze, w których OBIE drużyny rozegrały >= 10 spotkań.
     """
+    df = df.sort_values(['date', 'fixture_id']).reset_index(drop=True)
+    league_ctx = _league_context(df)
     team_history = {}
     rows = []
+    kept = 0
 
-    for _, row in df_transformed.iterrows():
-        team_id     = row['team_id']
-        opponent_id = row['opponent_id']
-        hist     = team_history.get(team_id, [])
-        opp_hist = team_history.get(opponent_id, [])
-        games_played     = len(hist)
-        opp_games_played = len(opp_hist)
+    for _, m in df.iterrows():
+        home_id, away_id = m['home_id'], m['away_id']
+        home_hist = team_history.get(home_id, [])
+        away_hist = team_history.get(away_id, [])
 
-        if games_played >= 10 and opp_games_played >= 10:
-            last5      = hist[-5:]
-            last10     = hist[-10:]
-            opp_last5  = opp_hist[-5:]
-            opp_last10 = opp_hist[-10:]
-
+        if len(home_hist) >= 10 and len(away_hist) >= 10:
+            kept += 1
+            ctx = league_ctx[m['fixture_id']]
+            base = {
+                'fixture_id': m['fixture_id'],
+                'date':       m['date'],
+                'season':     m['season'],
+                'league_id':  m['league_id'],
+            }
+            # perspektywa gospodarza
             rows.append({
-                # identyfikatory
-                'fixture_id':    row['fixture_id'],
-                'date':          row['date'],
-                'season':        row['season'],
-                'league_id':     row['league_id'],
-                'team_id':       team_id,
-                'team_name':     row['team_name'],
-                'opponent_id':   opponent_id,
-                'opponent_name': row['opponent_name'],
-                'is_home':       row['is_home'],
-                'games_played':  games_played,
-                # rolling last 5 — drużyna
-                'xg_scored_last5':      mean(x['xg_scored']      for x in last5),
-                'xg_conceded_last5':    mean(x['xg_conceded']    for x in last5),
-                'goals_scored_last5':   mean(x['goals_scored']   for x in last5),
-                'goals_conceded_last5': mean(x['goals_conceded'] for x in last5),
-                'won_last5':            mean(x['won']            for x in last5),
-                'drawn_last5':          mean(x['drawn']          for x in last5),
-                'lost_last5':           mean(x['lost']           for x in last5),
-                'btts_last5':           mean(x['btts']           for x in last5),
-                # rolling last 10 — drużyna
-                'xg_scored_last10':      mean(x['xg_scored']      for x in last10),
-                'xg_conceded_last10':    mean(x['xg_conceded']    for x in last10),
-                'goals_scored_last10':   mean(x['goals_scored']   for x in last10),
-                'goals_conceded_last10': mean(x['goals_conceded'] for x in last10),
-                'won_last10':            mean(x['won']            for x in last10),
-                'drawn_last10':          mean(x['drawn']          for x in last10),
-                'lost_last10':           mean(x['lost']           for x in last10),
-                'btts_last10':           mean(x['btts']           for x in last10),
-                # rolling last 5 — przeciwnik
-                'opp_xg_scored_last5':      mean(x['xg_scored']      for x in opp_last5),
-                'opp_xg_conceded_last5':    mean(x['xg_conceded']    for x in opp_last5),
-                'opp_goals_scored_last5':   mean(x['goals_scored']   for x in opp_last5),
-                'opp_goals_conceded_last5': mean(x['goals_conceded'] for x in opp_last5),
-                'opp_won_last5':            mean(x['won']            for x in opp_last5),
-                'opp_drawn_last5':          mean(x['drawn']          for x in opp_last5),
-                'opp_lost_last5':           mean(x['lost']           for x in opp_last5),
-                'opp_btts_last5':           mean(x['btts']           for x in opp_last5),
-                # rolling last 10 — przeciwnik
-                'opp_xg_scored_last10':      mean(x['xg_scored']      for x in opp_last10),
-                'opp_xg_conceded_last10':    mean(x['xg_conceded']    for x in opp_last10),
-                'opp_goals_scored_last10':   mean(x['goals_scored']   for x in opp_last10),
-                'opp_goals_conceded_last10': mean(x['goals_conceded'] for x in opp_last10),
-                'opp_won_last10':            mean(x['won']            for x in opp_last10),
-                'opp_drawn_last10':          mean(x['drawn']          for x in opp_last10),
-                'opp_lost_last10':           mean(x['lost']           for x in opp_last10),
-                'opp_btts_last10':           mean(x['btts']           for x in opp_last10),
-                # targety
-                'goals_scored':   row['goals_scored'],
-                'goals_conceded': row['goals_conceded'],
+                **base,
+                'team_id':       home_id,
+                'team_name':     m['home_name'],
+                'opponent_id':   away_id,
+                'opponent_name': m['away_name'],
+                'is_home':       1,
+                'games_played':  len(home_hist),
+                **_rolling(home_hist, ''),
+                **_rolling(away_hist, 'opp_'),
+                **_league_feats(ctx, is_home=True),
+                'goals_scored':   m['goals_home'],
+                'goals_conceded': m['goals_away'],
+            })
+            # perspektywa gościa
+            rows.append({
+                **base,
+                'team_id':       away_id,
+                'team_name':     m['away_name'],
+                'opponent_id':   home_id,
+                'opponent_name': m['home_name'],
+                'is_home':       0,
+                'games_played':  len(away_hist),
+                **_rolling(away_hist, ''),
+                **_rolling(home_hist, 'opp_'),
+                **_league_feats(ctx, is_home=False),
+                'goals_scored':   m['goals_away'],
+                'goals_conceded': m['goals_home'],
             })
 
-        # aktualizuj słownik zawsze — niezależnie od warunku
-        gs = row['goals_scored']
-        gc = row['goals_conceded']
-        team_history.setdefault(team_id, []).append({
-            'xg_scored':      row['xg_scored'],
-            'xg_conceded':    row['xg_conceded'],
-            'goals_scored':   gs,
-            'goals_conceded': gc,
-            'won':            int(gs > gc),
-            'drawn':          int(gs == gc),
-            'lost':           int(gs < gc),
-            'btts':           int(gs > 0 and gc > 0),
-        })
+        # aktualizacja historii OBU drużyn dopiero PO zbudowaniu wierszy
+        team_history.setdefault(home_id, []).append(
+            _team_record(m['goals_home'], m['goals_away'], m['xg_home'], m['xg_away']))
+        team_history.setdefault(away_id, []).append(
+            _team_record(m['goals_away'], m['goals_home'], m['xg_away'], m['xg_home']))
+
+    if not rows:
+        logger.warning("build_features: brak meczów spełniających próg >= 10 spotkań.")
+        return pd.DataFrame()
 
     result = pd.DataFrame(rows)
     logger.info(f"Sezon {result['season'].iloc[0]}: build_features → {len(result)} wierszy "
-                f"(odrzucono {len(df_transformed) - len(result)} wierszy < 10 meczów)")
+                f"({kept} meczów × 2, z {len(df)} meczów wejściowych).")
     return result
 
 
@@ -252,8 +256,6 @@ if __name__ == '__main__':
     df = impute_xg(df)
     seasons = split_by_season(df)
 
-    transformed = {season: transform(df_season) for season, df_season in seasons.items()}
-
-    features = {season: build_features(t_df) for season, t_df in transformed.items()}
+    features = {season: build_features(df_season) for season, df_season in seasons.items()}
 
     load_features(features)
